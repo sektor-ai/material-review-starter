@@ -8,16 +8,16 @@ merges.
 It exists so several branches (and several agent sessions) can be built and verified end to end at
 the same time, without fighting over one checkout, one set of ports and one database.
 
-Ported from the `wt` tool in the Hamlet project. Hamlet forks a Neon branch of staging per environment;
-here each environment gets a fresh database in the local docker-compose Postgres, migrated and seeded
-from the branch's own code (`reset-db` replaces Hamlet's `refork`).
+Adapted from the `wt` tool in the Hamlet project; behaviour that differs here is described below,
+not in terms of the original.
 
 ## Commands
 
 ```
 wt create <slug> [--type T] [--from R]  worktree + database + config, deps + API build, migrate + seed
 wt create <slug> --adopt <branch>  same, but on an existing local branch instead of a new one
-wt up <slug>                      start api and web (detached); waits until the API serves
+wt up <slug>                      start api and web (detached); waits until the API serves, and
+                                  exits non-zero if it crashes, times out or is unhealthy
 wt down <slug>                    stop them
 wt restart <slug> [process]       restart one process (default: api)
 wt rebase <slug>...               rebase each branch onto origin/main, force-push, restart API
@@ -84,12 +84,15 @@ with a warning when `main` is checked out somewhere dirty; `--no-advance` skips 
 environment, delete the local branch (`--keep-branch` keeps it). A promoted environment's branch is in
 the primary, so merge switches the primary to `main` before deleting it.
 
-**`rebase` is the only command that takes a list; the destructive single-environment commands refuse a
-second one.** `require_one_env` enforces it for `merge`, `rm`, `reset-db`, `promote`, `demote` and
-`resume` (`create` has its own copy); `test_env_args.sh` pins exactly that set. The habitual line after
-something lands names every environment (`wt rebase a b c`); typed with `merge` instead, a last-wins
-parser once squash-merged an unready branch. The guard counts positionals (so `wt merge '' x` cannot
-slip through) and is never called through `$( )`, because `die` there only exits the subshell.
+**`rebase` is the only command that takes a list; every other command takes at most one environment.**
+The habitual line after something lands names every environment (`wt rebase a b c`); typed with
+`merge` instead, a parser that kept the last positional would merge a pull request nobody chose.
+`require_one_env` refuses a second environment — called directly by the commands with their own
+flags (`merge`, `rm`, `reset-db`, `promote`, `demote`, `resume`; `create` has its own copy), and
+through `take_args` by the rest (`up`, `down`, `recreate-config`, `path`, and `restart`/`logs`/`url`,
+whose second argument is a process or service). A missing environment is a usage error.
+`test_env_args.sh` pins all of it. The guard counts positionals (so `wt merge '' x` cannot slip
+through) and is never called through `$( )`, because `die` there only exits the subshell.
 
 Keep branches current with `wt rebase <slug>`: fetch, rebase onto `origin/main`, `--force-with-lease`
 push (only if the branch is on origin), restart the API. A no-op when already current. A **conflict is
@@ -206,16 +209,19 @@ Generated artefacts live outside the worktree, so nothing can be committed by ac
   render otherwise (`test_render.sh`).
 - **`wt up` fails fast on a boot crash, and confirms the API actually serves.** It watches the api
   process (a crash surfaces its log tail in seconds) and, once the port opens, expects a 2xx from
-  `/healthz` — which pings the database, so "up" means serving against its own DB.
+  `/healthz` — which pings the database, so "up" means serving against its own DB. A crash, timeout
+  or unhealthy API exits non-zero (processes are left running to inspect); `reset-db` likewise.
 - **`process-compose` is always driven over a Unix socket, by relative path.** Its default is a TCP
   server on 8080. The socket is named relative to the state directory (process-compose runs from
   there) because macOS caps socket paths at 104 bytes; an absolute path under a long home or
-  `MR_WT_HOME` fails with `bind: invalid argument` (found porting this, latent in the original).
+  `MR_WT_HOME` fails with `bind: invalid argument`.
 - **`--disable-dotenv`** is passed to `process-compose up`, so it never loads a stray `.env`.
 - **`wt create` does the slow setup in parallel.** `pnpm install` and the API build run concurrently,
   so `wt up` starts from a warm cache and ready binaries.
-- **Worktrees share the primary checkout's `.git/hooks`**, so one symlink per hook serves every
-  environment. `post-commit` restarts the committing worktree's API (rebuild + migrate); `post-merge`
+- **Hooks go where git runs them from** — `git rev-parse --git-path hooks`, which honours
+  `core.hooksPath` and is otherwise the common `.git/hooks` every worktree shares — so one symlink per
+  hook serves every environment. A `core.hooksPath` outside the repository (a global hooks directory)
+  is refused rather than written to. `post-commit` restarts the committing worktree's API (rebuild + migrate); `post-merge`
   runs `wt gc`. An existing hook of either name is moved to `<hook>.pre-wt` and chain-called first.
   `hook_is_ours` compares by inode (`-ef`), so it recognises the hook via a symlinked path.
 - **`wt gc` is safe to run unattended.** It reaps environments whose PR merged or closed, but keeps

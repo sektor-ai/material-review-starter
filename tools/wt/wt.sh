@@ -42,9 +42,9 @@
 # are unique across environments, so the two name the same thing. Only `wt create` is a slug and nothing
 # else: it names an environment that does not exist yet.
 #
-# `rebase` is the only command that takes a list. The destructive single-environment commands (merge, rm,
-# reset-db, promote, demote, resume, and create) refuse a second environment rather than batching it or
-# letting the last one win — see require_one_env in lib/common.sh for why.
+# `rebase` is the only command that takes a list. Every other command takes at most one environment and
+# refuses a second rather than batching it or letting the last one win — see require_one_env in
+# lib/common.sh for why. A missing environment is a usage error, not a shell error.
 #
 # Requires bash 3.2 (what macOS ships), git, jq, envsubst, gh, process-compose, pnpm, go, curl and nc,
 # plus the docker-compose Postgres and MinIO running (make setup). See tools/wt/CLAUDE.md.
@@ -186,6 +186,25 @@ require_worktree() {
 	is_promoted "$slug" &&
 		die "'${slug}' is promoted — its branch is checked out in $(primary_root) and it has no worktree to ${verb}; bring it back first: wt demote ${slug}"
 	return 0
+}
+
+# take_args fills the global WT_ARGS with a command's positional arguments, dying on a flag, on none,
+# or on more than `max`. Every command naming an existing environment goes through it (or parses its
+# own flags and calls require_one_env), so no command silently ignores an extra argument or dies with
+# a bare `unbound variable` when given none. With max 1, a second argument gets require_one_env's
+# message, which points at `wt rebase`.
+take_args() {
+	local cmd=$1 usage=$2 max=$3 arg
+	shift 3
+	WT_ARGS=()
+	for arg in "$@"; do
+		case $arg in -*) die "unknown flag for ${cmd}: ${arg} (usage: wt ${usage})" ;; esac
+		WT_ARGS+=("$arg")
+	done
+	((${#WT_ARGS[@]} > 0)) || die "usage: wt ${usage}"
+	((${#WT_ARGS[@]} <= max)) && return 0
+	((max == 1)) && require_one_env "$cmd" 1 "${WT_ARGS[0]}" "${WT_ARGS[1]}"
+	die "${cmd} takes at most ${max} arguments, got ${#WT_ARGS[@]}: ${WT_ARGS[*]} (usage: wt ${usage})"
 }
 
 validate_process() {
@@ -451,8 +470,9 @@ render_config_files() {
 # primary's current .env, without touching its worktree, database or installed dependencies. Use after
 # changing the template, or after adding a key to .env that environments should see.
 cmd_recreate_config() {
-	local slug=$1
-	slug=$(resolve_env "$slug")
+	take_args recreate-config 'recreate-config <slug|branch>' 1 "$@"
+	local slug
+	slug=$(resolve_env "${WT_ARGS[0]}")
 	require_tools process-compose envsubst go
 	require_worktree "$slug" 'render config for'
 
@@ -513,7 +533,8 @@ cmd_reset_db() {
 	if env_running "$slug"; then
 		log 'restarting the API onto the new database'
 		pc "$slug" process restart api
-		api_await_ready "$slug" 'it rebuilds and re-runs migrations'
+		api_await_ready "$slug" 'it rebuilds and re-runs migrations' ||
+			die "${slug}'s data was reset, but the API is not serving on it (wt logs ${slug} api)"
 	else
 		dim "start it with: wt up ${slug}"
 	fi
@@ -524,8 +545,10 @@ cmd_reset_db() {
 
 # api_await_ready blocks until an environment's API is serving, and reports what it found. Shared by
 # `up` (waiting on a cold start) and `reset-db` (waiting on a restart onto a brand new database) — for
-# both, "done" means the API answers, not that a process was launched. The optional second argument is
-# a note appended to the waiting message, explaining why this particular wait might be slow.
+# both, "done" means the API answers, not that a process was launched. It returns non-zero on a crash,
+# a timeout or an unhealthy API, and callers fail on that: an agent reads exit 0 as "verified". The
+# optional second argument is a note appended to the waiting message, explaining why this particular
+# wait might be slow.
 api_await_ready() {
 	local slug=$1 note=${2:-} api dir
 	api=$(state_get "$slug" '.ports.api')
@@ -541,10 +564,10 @@ api_await_ready() {
 		if nc -z 127.0.0.1 "$api" 2>/dev/null; then
 			if api_healthy "$slug"; then
 				log "API is up and serving on :${api}"
-			else
-				warn "API :${api} is open but not serving a healthy response — check: wt logs ${slug} api"
+				return 0
 			fi
-			break
+			warn "API :${api} is open but not serving a healthy response — check: wt logs ${slug} api"
+			return 1
 		fi
 		if api_running "$slug"; then
 			seen_running=1
@@ -552,11 +575,11 @@ api_await_ready() {
 			warn "the API exited before opening :${api} — last ${CRASH_LOG_PREVIEW_LINES} log lines:"
 			tail -n "$CRASH_LOG_PREVIEW_LINES" "$dir/logs/api.log" >&2 2>/dev/null || true
 			warn "full log: wt logs ${slug} api"
-			break
+			return 1
 		fi
 		((waited >= API_READY_TIMEOUT_SECONDS)) && {
 			warn "API did not come up within ${API_READY_TIMEOUT_SECONDS}s — check: wt logs ${slug} api"
-			break
+			return 1
 		}
 		sleep 2
 		waited=$((waited + 2))
@@ -564,8 +587,9 @@ api_await_ready() {
 }
 
 cmd_up() {
-	local slug=$1
-	slug=$(resolve_env "$slug")
+	take_args up 'up <slug|branch>' 1 "$@"
+	local slug
+	slug=$(resolve_env "${WT_ARGS[0]}")
 	require_tools process-compose curl nc
 	require_worktree "$slug" 'start'
 
@@ -580,14 +604,18 @@ cmd_up() {
 		--config "$dir/process-compose.yml" \
 		--detached --tui=false --disable-dotenv
 
-	api_await_ready "$slug" 'first build can take a minute'
+	if ! api_await_ready "$slug" 'first build can take a minute'; then
+		cmd_list
+		die "${slug} started, but its API is not serving; processes are left running so you can look (wt logs ${slug} api, then wt down ${slug})"
+	fi
 
 	cmd_list
 }
 
 cmd_down() {
-	local slug=$1
-	slug=$(resolve_env "$slug")
+	take_args down 'down <slug|branch>' 1 "$@"
+	local slug
+	slug=$(resolve_env "${WT_ARGS[0]}")
 	env_running "$slug" || {
 		dim "environment '${slug}' is not running"
 		return 0
@@ -599,8 +627,9 @@ cmd_down() {
 }
 
 cmd_restart() {
-	local slug=$1 process=${2:-api}
-	slug=$(resolve_env "$slug")
+	take_args restart 'restart <slug|branch> [api|web]' 2 "$@"
+	local slug process=${WT_ARGS[1]:-api}
+	slug=$(resolve_env "${WT_ARGS[0]}")
 	validate_process "$process"
 	require_worktree "$slug" 'restart'
 	env_running "$slug" || die "environment '${slug}' is not running (wt up ${slug})"
@@ -697,8 +726,9 @@ rebase_one() {
 }
 
 cmd_logs() {
-	local slug=$1 process=${2:-api}
-	slug=$(resolve_env "$slug")
+	take_args logs 'logs <slug|branch> [api|web]' 2 "$@"
+	local slug process=${WT_ARGS[1]:-api}
+	slug=$(resolve_env "${WT_ARGS[0]}")
 	validate_process "$process"
 	env_running "$slug" || {
 		# Fall back to the log file so a crashed environment can still be diagnosed.
@@ -811,21 +841,22 @@ cmd_list() {
 # what `wt cd` consumes. The slug case reads the path recorded in state, so it needs neither git nor a
 # particular working directory; the no-slug case resolves the primary relative to the caller's cwd.
 cmd_path() {
-	local slug=${1:-}
-	[[ -n $slug ]] || {
+	(($# > 0)) || {
 		primary_root
 		return 0
 	}
-
-	slug=$(resolve_env "$slug")
+	take_args path 'path [slug|branch]' 1 "$@"
+	local slug
+	slug=$(resolve_env "${WT_ARGS[0]}")
 	state_get "$slug" '.path'
 }
 
 # cmd_url prints service URLs for an environment. With a service argument it prints just that bare URL
 # (scriptable, e.g. `open "$(wt url smoke web)"`); without one it prints every service as name<TAB>url.
 cmd_url() {
-	local slug=$1 service=${2:-}
-	slug=$(resolve_env "$slug")
+	take_args url 'url <slug|branch> [api|web]' 2 "$@"
+	local slug service=${WT_ARGS[1]:-}
+	slug=$(resolve_env "${WT_ARGS[0]}")
 
 	[[ -n $service ]] && {
 		service_url "$slug" "$service"
@@ -1049,7 +1080,7 @@ primary_release_branch() {
 slug_from_branch() {
 	local branch=$1 slug=${branch##*/}
 	[[ $slug =~ $SLUG_PATTERN ]] ||
-		die "cannot derive an environment name from '${branch}' (lowercase letters, digits and dashes, max 39 chars); name one yourself: wt create <slug> --adopt ${branch}"
+		die "cannot derive an environment name from '${branch}' (lowercase letters, digits and dashes, starting and ending with a letter or digit, max 39 chars); name one yourself: wt create <slug> --adopt ${branch}"
 	printf '%s\n' "$slug"
 }
 
@@ -1394,18 +1425,36 @@ cmd_merge() {
 # hook_is_ours reports whether the named installed hook is our symlink. It compares by inode (-ef)
 # rather than by the symlink's text, so it still recognises the hook when reached via a different but
 # equivalent path (a symlinked home or volume).
+# hooks_dir prints the directory git actually runs hooks from: core.hooksPath when set, else the
+# common .git/hooks every worktree shares. The installed hooks resolve their location the same way
+# (`git rev-parse --git-path hooks`), so install and runtime agree. It dies when that directory is
+# outside this repository: a global core.hooksPath serves every repo on the machine, and wt must not
+# install itself into all of them.
+hooks_dir() {
+	local primary dir
+	primary=$(primary_root)
+	dir=$(git -C "$primary" rev-parse --path-format=absolute --git-path hooks) ||
+		die 'cannot resolve the git hooks directory'
+	case $dir in
+	"$primary"/*) printf '%s\n' "$dir" ;;
+	*) die "git runs hooks from ${dir} (core.hooksPath), outside this repository; wt will not install into a shared hooks directory — link tools/wt/hooks/* there by hand if you want them" ;;
+	esac
+}
+
 hook_is_ours() {
-	local name=$1 hook
-	hook="$(primary_root)/.git/hooks/$name"
+	local name=$1 dir hook
+	dir=$(hooks_dir 2>/dev/null) || return 1
+	hook="$dir/$name"
 	[[ -L $hook && $hook -ef "$SCRIPT_DIR/hooks/$name" ]]
 }
 
 # install_one_hook symlinks one of our hooks into the shared hooks directory, preserving any
 # pre-existing hook of that name as <hook>.pre-wt so ours can chain-call it rather than clobber it.
 install_one_hook() {
-	local name=$1 primary hook chained
-	primary=$(primary_root)
-	hook="$primary/.git/hooks/$name"
+	local name=$1 dir hook chained
+	dir=$(hooks_dir)
+	mkdir -p "$dir"
+	hook="$dir/$name"
 	chained="$hook$HOOK_CHAINED_SUFFIX"
 
 	hook_is_ours "$name" && {
@@ -1431,9 +1480,9 @@ cmd_install_hooks() {
 }
 
 uninstall_one_hook() {
-	local name=$1 primary hook chained
-	primary=$(primary_root)
-	hook="$primary/.git/hooks/$name"
+	local name=$1 dir hook chained
+	dir=$(hooks_dir)
+	hook="$dir/$name"
 	chained="$hook$HOOK_CHAINED_SUFFIX"
 
 	hook_is_ours "$name" || {
