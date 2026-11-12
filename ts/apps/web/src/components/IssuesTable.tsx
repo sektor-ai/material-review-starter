@@ -26,6 +26,13 @@ export function sortIssues(issues: Issue[]): Issue[] {
   });
 }
 
+// conflictNotice explains a rejected quick change without blaming another
+// person for what may have been the user's own earlier write.
+export function conflictNotice(current: Issue, me: User): string {
+  const who = current.updatedBy?.id === me.id ? "You" : userName(current.updatedBy);
+  return `${who} changed “${current.title}” since this row was loaded, so your change wasn't saved. The table now shows the latest version; check it and try again.`;
+}
+
 type Dialog =
   | { kind: "create" }
   | { kind: "edit"; issue: Issue }
@@ -50,6 +57,9 @@ export function IssuesTable({
   const [documentId, setDocumentId] = useState<string>("all");
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Issues with a quick change in flight. Their controls are disabled so a
+  // second change can't be sent with the version the first one replaces.
+  const [saving, setSaving] = useState<ReadonlySet<string>>(new Set());
   const update = useUpdateIssue();
 
   const documentTitles = useMemo(
@@ -73,16 +83,22 @@ export function IssuesTable({
   const byId = (id: string) => all.find((i) => i.id === id);
 
   async function quickUpdate(issue: Issue, fields: { severity?: IssueSeverity; status?: IssueStatus }) {
+    if (saving.has(issue.id)) return;
     setNotice(null);
+    setSaving((s) => new Set(s).add(issue.id));
+    // The version on screen: the change is based on what the user sees.
+    const expectedVersion = byId(issue.id)?.version ?? issue.version;
     try {
-      const outcome = await update.mutateAsync({ id: issue.id, expectedVersion: issue.version, fields });
-      if (outcome.kind === "conflict") {
-        setNotice(
-          `${userName(outcome.current.updatedBy)} changed “${outcome.current.title}” just before you, so your change wasn't saved. The table now shows their version; check it and try again.`,
-        );
-      }
+      const outcome = await update.mutateAsync({ id: issue.id, expectedVersion, fields });
+      if (outcome.kind === "conflict") setNotice(conflictNotice(outcome.current, me));
     } catch (error) {
       setNotice(errorMessage(error));
+    } finally {
+      setSaving((s) => {
+        const next = new Set(s);
+        next.delete(issue.id);
+        return next;
+      });
     }
   }
 
@@ -157,6 +173,7 @@ export function IssuesTable({
                       <select
                         className={`severity-select sev-${issue.severity}`}
                         value={issue.severity}
+                        disabled={saving.has(issue.id)}
                         aria-label={`Severity of ${issue.title}`}
                         onChange={(e) => quickUpdate(issue, { severity: Number(e.target.value) as IssueSeverity })}
                       >
@@ -172,12 +189,17 @@ export function IssuesTable({
                     <IssueStatusBadge status={issue.status} />
                     {!locked &&
                       (issue.status === IssueStatus.OPEN ? (
-                        <button className="link small block" onClick={() => setDialog({ kind: "close", issue })}>
+                        <button
+                          className="link small block"
+                          disabled={saving.has(issue.id)}
+                          onClick={() => setDialog({ kind: "close", issue })}
+                        >
                           Close…
                         </button>
                       ) : (
                         <button
                           className="link small block"
+                          disabled={saving.has(issue.id)}
                           onClick={() => quickUpdate(issue, { status: IssueStatus.OPEN })}
                         >
                           Reopen

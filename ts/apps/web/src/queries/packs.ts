@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DocumentStatus, type GetPackResponse } from "@app/api";
 import { clients } from "../api.ts";
-import { keys, writePack } from "./cache.ts";
+import { keys, mergePackResponse, writePack } from "./cache.ts";
 
 // The server rejects larger uploads; checking first saves sending 20 MB to
 // be told so.
@@ -22,9 +22,13 @@ function hasProcessingDocuments(data: GetPackResponse | undefined): boolean {
 }
 
 export function usePack(id: string) {
+  const qc = useQueryClient();
   return useQuery({
     queryKey: keys.pack(id),
-    queryFn: () => clients().pack.getPack({ id }),
+    queryFn: async () => mergePackResponse(qc.getQueryData(keys.pack(id)), await clients().pack.getPack({ id })),
+    // WatchPack keeps the pack and its run current, so there is nothing to
+    // gain from refetching on focus.
+    refetchOnWindowFocus: false,
     // WatchPack does not report document parsing, so poll while any
     // document is still being processed.
     refetchInterval: (query) => (hasProcessingDocuments(query.state.data) ? 2_000 : false),
@@ -104,9 +108,9 @@ export function useUploadDocument(packId: string) {
   });
 }
 
-export function useDocument(id: string | undefined) {
+export function useDocument(id: string | undefined, status: DocumentStatus) {
   return useQuery({
-    queryKey: keys.document(id ?? ""),
+    queryKey: keys.document(id ?? "", status),
     queryFn: () => clients().pack.getDocument({ id: id! }),
     enabled: id !== undefined,
   });

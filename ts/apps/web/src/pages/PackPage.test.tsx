@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { IssueStatus, UpdateIssueRequestSchema, type Issue } from "@app/api";
 import { setTransport } from "../api.ts";
 import { App } from "../App.tsx";
+import { navigate } from "../router.tsx";
 import { createMockApi, type MockApi, type SessionStore } from "../mock/index.ts";
 import { mockUsers } from "../mock/seed.ts";
 
@@ -106,5 +107,41 @@ describe("PackPage", () => {
     const drawer = await screen.findByRole("dialog");
     await within(drawer).findByText("“Resubmitted at 0.45”");
     expect(within(drawer).getByText("Alice Morgan")).toBeTruthy();
+  });
+
+  it("does not flag changes already seen when returning to the page", async () => {
+    renderApp();
+    await screen.findByText(W_C);
+    await screen.findByText("Live");
+    bobUpdates(openIssue(W_C), { title: "Seen once" });
+    await screen.findByText("Updated by Bob Chen");
+
+    const packPath = window.location.pathname;
+    act(() => navigate("/"));
+    await screen.findByText("Material submittals");
+    act(() => navigate(packPath));
+    await screen.findByText("Seen once");
+    await screen.findByText("Live");
+    // Give a replay time to arrive; it must not mark the row as news.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText("Updated by Bob Chen")).toBeNull();
+  });
+
+  it("holds a row's quick controls while its change is saving", async () => {
+    api = createMockApi({ isolated: true, session: memorySession(), latencyMs: 80, agentStepMs: 20 });
+    setTransport(api.transport);
+    const s001 = [...api.store.packs.values()].find((p) => p.submittalNo === "S-001")!;
+    window.history.pushState(null, "", `/packs/${s001.id}`);
+    renderApp();
+    const select = (await screen.findByLabelText(`Severity of ${W_C}`)) as HTMLSelectElement;
+    const before = openIssue(W_C).version;
+
+    fireEvent.change(select, { target: { value: "2" } });
+    expect(select.disabled).toBe(true);
+    await waitFor(() => expect(select.disabled).toBe(false));
+    fireEvent.change(select, { target: { value: "3" } });
+    await waitFor(() => expect(openIssue(W_C).version).toBe(before + 2));
+    expect(openIssue(W_C).severity).toBe(3);
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

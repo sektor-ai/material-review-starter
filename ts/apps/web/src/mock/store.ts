@@ -138,7 +138,9 @@ export class MockStore {
       case "issue": {
         const existing = this.issues.get(c.issue.id);
         if (!existing || existing.version < c.issue.version) this.issues.set(c.issue.id, c.issue);
-        if (!this.events.some((e) => e.seq === c.event.seq)) {
+        // An event is identified by the issue version it produced; two
+        // tabs may still pick the same seq, and neither event may be lost.
+        if (!this.events.some((e) => e.issueId === c.event.issueId && e.version === c.event.version)) {
           this.events.push(c.event);
           this.events.sort((a, b) => (a.seq < b.seq ? -1 : 1));
         }
@@ -172,8 +174,14 @@ export class MockStore {
     for (const l of this.listeners) l(packId, res);
   }
 
+  // nextSeq numbers events without coordinating between tabs: from the
+  // clock, with a random low part, never below the last seq seen. Two tabs
+  // committing in the same millisecond are very unlikely to collide, and
+  // seq still follows commit order closely enough for a dev mock.
   private nextSeq(): bigint {
-    return (this.events.at(-1)?.seq ?? 0n) + 1n;
+    const next = (this.events.at(-1)?.seq ?? 0n) + 1n;
+    const fromClock = BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000));
+    return fromClock > next ? fromClock : next;
   }
 
   // ---- packs ----
@@ -251,6 +259,11 @@ export class MockStore {
   approvePack(me: User, id: string): Pack {
     const pack = this.mustPack(id);
     if (pack.status !== PackStatus.RESOLVED) failedPrecondition("only a resolved pack can be approved");
+    // As the backend does: approving mid-review would leave the run
+    // writing issues into a pack that can no longer change.
+    if (this.listRuns(id).some((r) => isActiveRun(r.status))) {
+      failedPrecondition(`pack ${pack.submittalNo} has a review in progress`);
+    }
     const now = this.now();
     this.commit({
       kind: "pack",

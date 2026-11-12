@@ -3,7 +3,7 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { WatchPackResponse } from "@app/api";
 import { clients } from "../api.ts";
 import { userName } from "../format.ts";
-import { writeIssue, writeIssueEvent, writePack, writeRun } from "./cache.ts";
+import { advanceCursor, writeIssue, writeIssueEvent, writePack, writeRun } from "./cache.ts";
 
 export type WatchStatus = "connecting" | "live" | "reconnecting";
 
@@ -14,24 +14,34 @@ const RECENT_MS = 6_000;
 const SILENCE_MS = 45_000;
 const MAX_BACKOFF_MS = 15_000;
 
-// applyWatchUpdate writes one stream message into the query cache and
-// returns the event seq it carried, if any.
-export function applyWatchUpdate(qc: QueryClient, res: WatchPackResponse): bigint | undefined {
+export type Applied = {
+  // The event seq the message carried, if any.
+  seq?: bigint;
+  // True when an issue in the cache changed; false for a replay of
+  // something the cache already held.
+  issueChanged: boolean;
+};
+
+// applyWatchUpdate writes one stream message into the query cache.
+export function applyWatchUpdate(qc: QueryClient, res: WatchPackResponse): Applied {
   switch (res.update.case) {
     case "issueChanged": {
       const { issue, event } = res.update.value;
-      if (issue) writeIssue(qc, issue);
-      if (event) writeIssueEvent(qc, event);
-      return event?.seq;
+      const issueChanged = issue ? writeIssue(qc, issue) : false;
+      if (event) {
+        writeIssueEvent(qc, event);
+        advanceCursor(qc, event.packId, event.seq);
+      }
+      return { seq: event?.seq, issueChanged };
     }
     case "runUpdated":
       writeRun(qc, res.update.value);
-      return undefined;
+      return { issueChanged: false };
     case "packUpdated":
       writePack(qc, res.update.value);
-      return undefined;
+      return { issueChanged: false };
     default:
-      return undefined;
+      return { issueChanged: false };
   }
 }
 
@@ -98,9 +108,11 @@ export function usePackWatch(packId: string, cursorSeq: bigint | undefined, meId
             watchdog = setTimeout(() => conn.abort(), SILENCE_MS);
             attempt = 0;
             setStatus("live");
-            const eventSeq = applyWatchUpdate(qc, res);
-            if (eventSeq !== undefined && eventSeq > seq) seq = eventSeq;
-            markRecent(res);
+            const applied = applyWatchUpdate(qc, res);
+            if (applied.seq !== undefined && applied.seq > seq) seq = applied.seq;
+            // Only flag real news: a replay of what the cache already
+            // holds is not someone else's change.
+            if (applied.issueChanged) markRecent(res);
           }
         } catch {
           // Dropped, timed out, or the server went away: reconnect below.

@@ -38,7 +38,7 @@ export function PackPage({ id, me }: { id: string; me: User }) {
         <Link to="/">Submittals</Link> / {current.submittalNo}
         <LiveIndicator status={watch.status} />
       </nav>
-      <PackHeader pack={current} />
+      <PackHeader pack={current} latestRun={latestRun} />
       <div className="grid-2">
         <DocumentsPanel packId={id} documents={documents} locked={locked} />
         <ReviewPanel pack={current} latestRun={latestRun} hasReadyDocuments={documents.some((d) => d.status === DocumentStatus.READY)}

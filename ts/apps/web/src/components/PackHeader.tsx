@@ -1,15 +1,25 @@
 import { useState, type FormEvent } from "react";
-import { PackStatus, type Pack } from "@app/api";
+import { PackStatus, type Pack, type ReviewRun } from "@app/api";
 import { errorMessage } from "../api.ts";
-import { isFinal } from "../format.ts";
+import { isActiveRun, isFinal } from "../format.ts";
 import { useApprovePack, useCancelPack, useUpdatePack } from "../queries/packs.ts";
 import { ErrorText, Modal, PackStatusBadge, TimeAgo, UserTag } from "../ui.tsx";
 
-export function PackHeader({ pack }: { pack: Pack }) {
+// approveBlocker says why the pack can't be approved yet, or null if it can.
+export function approveBlocker(pack: Pack, latestRun: ReviewRun | undefined): string | null {
+  if (isActiveRun(latestRun?.status)) return "A review is in progress; wait for it to finish or stop it first";
+  if (pack.status !== PackStatus.RESOLVED) {
+    return "A submittal can be approved once a review has succeeded and every issue is closed";
+  }
+  return null;
+}
+
+export function PackHeader({ pack, latestRun }: { pack: Pack; latestRun: ReviewRun | undefined }) {
   const [editing, setEditing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const approve = useApprovePack(pack.id);
   const locked = isFinal(pack.status);
+  const blocker = approveBlocker(pack, latestRun);
 
   return (
     <section className="card-panel">
@@ -49,12 +59,8 @@ export function PackHeader({ pack }: { pack: Pack }) {
             </button>
             <button
               onClick={() => approve.mutate()}
-              disabled={pack.status !== PackStatus.RESOLVED || approve.isPending}
-              title={
-                pack.status === PackStatus.RESOLVED
-                  ? "Approval is final"
-                  : "A submittal can be approved once a review has succeeded and every issue is closed"
-              }
+              disabled={blocker !== null || approve.isPending}
+              title={blocker ?? "Approval is final"}
             >
               {approve.isPending ? "Approving…" : "Approve"}
             </button>

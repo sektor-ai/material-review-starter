@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { GetPackResponse, Issue, IssueEvent, ListPacksResponse, Pack, ReviewRun } from "@app/api";
+import { ReviewRunStatus, type GetPackResponse, type Issue, type IssueEvent, type ListPacksResponse, type Pack, type ReviewRun } from "@app/api";
 import { toDate } from "../format.ts";
 
 // Query keys and cache writes shared by the query hooks and the WatchPack
@@ -10,7 +10,9 @@ import { toDate } from "../format.ts";
 export const keys = {
   packs: ["packs"] as const,
   pack: (id: string) => ["pack", id] as const,
-  document: (id: string) => ["document", id] as const,
+  // Keyed by status too, so the parsed text is fetched again once a
+  // document finishes processing.
+  document: (id: string, status: number) => ["document", id, status] as const,
   issues: (packId: string) => ["issues", packId] as const,
   issueEvents: (issueId: string) => ["issueEvents", issueId] as const,
   runs: (packId: string) => ["runs", packId] as const,
@@ -51,21 +53,84 @@ function createdMs(run: ReviewRun | undefined): number {
   return toDate(run?.createdAt)?.getTime() ?? 0;
 }
 
-// upsertRun replaces a run by id or adds it, keeping newest first.
-export function upsertRun(runs: ReviewRun[], run: ReviewRun): ReviewRun[] {
-  const rest = runs.filter((r) => r.id !== run.id);
-  return [...rest, run].sort((a, b) => createdMs(b) - createdMs(a));
+// A run only moves forward: queued, then running, then finished.
+function runStage(run: ReviewRun): number {
+  switch (run.status) {
+    case ReviewRunStatus.QUEUED:
+      return 0;
+    case ReviewRunStatus.RUNNING:
+      return 1;
+    case ReviewRunStatus.UNSPECIFIED:
+      return -1;
+    default:
+      return 2;
+  }
 }
 
-// latestRun picks which run a pack shows: the same run updated, or a newer one.
-export function latestRun(current: ReviewRun | undefined, incoming: ReviewRun): ReviewRun {
-  if (!current || current.id === incoming.id) return incoming;
+// newerRunState picks the later of two snapshots of the same run. Runs
+// carry no version, so a snapshot from a later stage wins, and within a
+// stage the one with more issues raised; on a tie the incoming one.
+export function newerRunState(current: ReviewRun, incoming: ReviewRun): ReviewRun {
+  const stage = runStage(incoming) - runStage(current);
+  if (stage !== 0) return stage > 0 ? incoming : current;
+  return incoming.issuesCreated >= current.issuesCreated ? incoming : current;
+}
+
+// upsertRun replaces a run by id or adds it, keeping newest first.
+export function upsertRun(runs: ReviewRun[], run: ReviewRun): ReviewRun[] {
+  const existing = runs.find((r) => r.id === run.id);
+  const next = existing ? newerRunState(existing, run) : run;
+  const rest = runs.filter((r) => r.id !== run.id);
+  return [...rest, next].sort((a, b) => createdMs(b) - createdMs(a));
+}
+
+// latestRun picks which run a pack shows: the latest state of the same
+// run, or a newer run.
+export function latestRun(current: ReviewRun | undefined, incoming: ReviewRun | undefined): ReviewRun | undefined {
+  if (!current || !incoming) return incoming ?? current;
+  if (current.id === incoming.id) return newerRunState(current, incoming);
   return createdMs(incoming) >= createdMs(current) ? incoming : current;
 }
 
-export function writeIssue(qc: QueryClient, issue: Issue) {
-  qc.setQueryData<IssuesData>(keys.issues(issue.packId), (data) =>
-    data ? { ...data, issues: upsertIssue(data.issues, issue) } : data,
+// newerPack keeps the later snapshot of a pack. The server bumps
+// updated_at on every change to the pack row, status included; derived
+// counts don't bump it, so on a tie the incoming snapshot wins.
+export function newerPack(current: Pack | undefined, incoming: Pack | undefined): Pack | undefined {
+  if (!current || !incoming) return incoming ?? current;
+  const cur = toDate(current.updatedAt)?.getTime() ?? 0;
+  const inc = toDate(incoming.updatedAt)?.getTime() ?? 0;
+  return cur > inc ? current : incoming;
+}
+
+// mergePackResponse folds a GetPack refetch into the cache. The stream may
+// have delivered newer pack or run state while the request was in flight;
+// this keeps that instead of rolling it back. Documents are not streamed,
+// so they come from the refetch.
+export function mergePackResponse(cached: GetPackResponse | undefined, fetched: GetPackResponse): GetPackResponse {
+  if (!cached) return fetched;
+  return {
+    ...fetched,
+    pack: newerPack(cached.pack, fetched.pack),
+    latestRun: latestRun(cached.latestRun, fetched.latestRun),
+  };
+}
+
+// writeIssue stores the issue if it is newer than the cached copy and
+// reports whether it was.
+export function writeIssue(qc: QueryClient, issue: Issue): boolean {
+  const data = qc.getQueryData<IssuesData>(keys.issues(issue.packId));
+  if (!data) return false;
+  const issues = upsertIssue(data.issues, issue);
+  if (issues === data.issues) return false;
+  qc.setQueryData<IssuesData>(keys.issues(issue.packId), { ...data, issues });
+  return true;
+}
+
+// advanceCursor records that the cache holds every event up to seq, so a
+// stream opened later (e.g. on returning to the page) does not replay them.
+export function advanceCursor(qc: QueryClient, packId: string, seq: bigint) {
+  qc.setQueryData<IssuesData>(keys.issues(packId), (data) =>
+    data && seq > data.cursorSeq ? { ...data, cursorSeq: seq } : data,
   );
 }
 
@@ -83,7 +148,9 @@ export function writeRun(qc: QueryClient, run: ReviewRun) {
 }
 
 export function writePack(qc: QueryClient, pack: Pack) {
-  qc.setQueryData<GetPackResponse>(keys.pack(pack.id), (data) => (data ? { ...data, pack } : data));
+  qc.setQueryData<GetPackResponse>(keys.pack(pack.id), (data) =>
+    data ? { ...data, pack: newerPack(data.pack, pack) } : data,
+  );
   qc.setQueryData<ListPacksResponse>(keys.packs, (data) =>
     data ? { ...data, packs: data.packs.map((p) => (p.id === pack.id ? pack : p)) } : data,
   );
