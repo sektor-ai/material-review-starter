@@ -40,14 +40,8 @@ type S3 struct {
 // primary's database. A .env found by walking up is only a default, so it
 // never overrides what is already set.
 func Load() (Config, error) {
-	if path := os.Getenv("ENV_FILE"); path != "" {
-		if err := loadEnvFile(path, true); err != nil {
-			return Config{}, err
-		}
-	} else if path, ok := FindEnvFile(); ok {
-		if err := loadEnvFile(path, false); err != nil {
-			return Config{}, err
-		}
+	if err := loadEnv(); err != nil {
+		return Config{}, err
 	}
 
 	var missing []string
@@ -81,9 +75,41 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+// Agent is the configuration of the Managed Agent the reviewer runs on. It is
+// all cmd/agent-setup needs, so that command does not require a database or
+// object storage to be configured.
+type Agent struct {
+	AgentID       string
+	EnvironmentID string
+}
+
+// LoadAgent reads the env file (as Load does) and returns only the agent ids.
+// Both may be empty: agent-setup creates what is missing.
+func LoadAgent() (Agent, error) {
+	if err := loadEnv(); err != nil {
+		return Agent{}, err
+	}
+	return Agent{AgentID: os.Getenv("AGENT_ID"), EnvironmentID: os.Getenv("ENVIRONMENT_ID")}, nil
+}
+
+// loadEnv loads ENV_FILE if set (overriding exported variables), else the
+// nearest .env (never overriding).
+func loadEnv() error {
+	if path := os.Getenv("ENV_FILE"); path != "" {
+		return loadEnvFile(path, true)
+	}
+	if path, ok := FindEnvFile(); ok {
+		return loadEnvFile(path, false)
+	}
+	return nil
+}
+
 // FindEnvFile returns ENV_FILE when it is set, so a worktree environment
 // (tools/wt) can point every command at its own rendered settings. Otherwise
-// it walks up from the working directory looking for a .env file.
+// it walks up from the working directory looking for a .env file, stopping at
+// the repository root (the first directory holding a .git directory or, in a
+// worktree, a .git file): a .env above the repository, such as ~/.env, belongs
+// to something else.
 func FindEnvFile() (string, bool) {
 	if path := os.Getenv("ENV_FILE"); path != "" {
 		return path, true
@@ -96,6 +122,9 @@ func FindEnvFile() (string, bool) {
 		path := filepath.Join(dir, ".env")
 		if _, err := os.Stat(path); err == nil {
 			return path, true
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return "", false
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {

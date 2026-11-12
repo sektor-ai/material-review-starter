@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -20,11 +21,18 @@ func main() {
 }
 
 func run(ctx context.Context) error {
+	// The agent and its environment are shared by every checkout, so their ids
+	// belong in the primary checkout's .env. Under ENV_FILE (a tools/wt
+	// environment) the write would land in a rendered app.env that the next
+	// `wt recreate-config` overwrites.
+	if path := os.Getenv("ENV_FILE"); path != "" {
+		return fmt.Errorf("ENV_FILE is set (%s): agent-setup writes the shared agent ids to the primary checkout's .env; run `make agent-setup` from the primary, then `wt recreate-config <slug>` to pass them on", path)
+	}
 	envPath, ok := config.FindEnvFile()
 	if !ok {
-		return errors.New("no .env found; copy .env.example to .env first")
+		return errors.New("no .env found in this repository; copy .env.example to .env first")
 	}
-	cfg, err := config.Load()
+	cfg, err := config.LoadAgent()
 	if err != nil {
 		return err
 	}
