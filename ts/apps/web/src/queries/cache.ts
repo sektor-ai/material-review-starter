@@ -152,6 +152,8 @@ export function writePack(qc: QueryClient, pack: Pack) {
     data ? { ...data, pack: newerPack(data.pack, pack) } : data,
   );
   qc.setQueryData<ListPacksResponse>(keys.packs, (data) =>
-    data ? { ...data, packs: data.packs.map((p) => (p.id === pack.id ? pack : p)) } : data,
+    data
+      ? { ...data, packs: data.packs.map((p) => (p.id === pack.id ? (newerPack(p, pack) ?? pack) : p)) }
+      : data,
   );
 }

@@ -239,7 +239,11 @@ export function IssuesTable({
                   </td>
                   <td className="nowrap row-actions">
                     {!locked && (
-                      <button className="link" onClick={() => setDialog({ kind: "edit", issue })}>
+                      <button
+                        className="link"
+                        disabled={saving.has(issue.id)}
+                        onClick={() => setDialog({ kind: "edit", issue })}
+                      >
                         Edit
                       </button>
                     )}
