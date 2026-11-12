@@ -99,7 +99,7 @@ func scanEvent(row pgx.Row) (IssueEvent, error) {
 	return e, err
 }
 
-func one[T any](q querier, ctx context.Context, scan func(pgx.Row) (T, error), what, sql string, args ...any) (T, error) {
+func one[T any](ctx context.Context, q querier, scan func(pgx.Row) (T, error), what, sql string, args ...any) (T, error) {
 	v, err := scan(q.QueryRow(ctx, sql, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return v, ErrNotFound
@@ -110,7 +110,7 @@ func one[T any](q querier, ctx context.Context, scan func(pgx.Row) (T, error), w
 	return v, nil
 }
 
-func many[T any](q querier, ctx context.Context, scan func(pgx.Row) (T, error), what, sql string, args ...any) ([]T, error) {
+func many[T any](ctx context.Context, q querier, scan func(pgx.Row) (T, error), what, sql string, args ...any) ([]T, error) {
 	rows, err := q.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("querying %s: %w", what, err)
@@ -130,7 +130,7 @@ func many[T any](q querier, ctx context.Context, scan func(pgx.Row) (T, error), 
 	return out, nil
 }
 
-func scalar[T any](q querier, ctx context.Context, what, sql string, args ...any) (T, error) {
+func scalar[T any](ctx context.Context, q querier, what, sql string, args ...any) (T, error) {
 	var v T
 	err := q.QueryRow(ctx, sql, args...).Scan(&v)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -150,24 +150,24 @@ func uniqueViolation(err error, constraint string) bool {
 // ---- Reads ------------------------------------------------------------------
 
 func (s *Store) ListPacks(ctx context.Context) ([]Pack, error) {
-	return many(s.pool, ctx, scanPack, "packs", packSelect+` ORDER BY p.created_at DESC`)
+	return many(ctx, s.pool, scanPack, "packs", packSelect+` ORDER BY p.created_at DESC`)
 }
 
 func (s *Store) GetPack(ctx context.Context, id string) (Pack, error) {
-	return one(s.pool, ctx, scanPack, "pack", packSelect+` WHERE p.id = $1`, id)
+	return one(ctx, s.pool, scanPack, "pack", packSelect+` WHERE p.id = $1`, id)
 }
 
 func (s *Store) ListDocuments(ctx context.Context, packID string) ([]Document, error) {
-	return many(s.pool, ctx, scanDocument, "documents", documentSelect+` WHERE d.pack_id = $1 ORDER BY d.created_at`, packID)
+	return many(ctx, s.pool, scanDocument, "documents", documentSelect+` WHERE d.pack_id = $1 ORDER BY d.created_at`, packID)
 }
 
 func (s *Store) GetDocument(ctx context.Context, id string) (Document, error) {
-	return one(s.pool, ctx, scanDocument, "document", documentSelect+` WHERE d.id = $1`, id)
+	return one(ctx, s.pool, scanDocument, "document", documentSelect+` WHERE d.id = $1`, id)
 }
 
 // ReadyDocuments returns a pack's READY documents with their parsed text.
 func (s *Store) ReadyDocuments(ctx context.Context, packID string) ([]Document, []string, error) {
-	docs, err := many(s.pool, ctx, scanDocument, "documents",
+	docs, err := many(ctx, s.pool, scanDocument, "documents",
 		documentSelect+` WHERE d.pack_id = $1 AND d.status = 'ready' ORDER BY d.created_at`, packID)
 	if err != nil {
 		return nil, nil, err
@@ -183,29 +183,29 @@ func (s *Store) ReadyDocuments(ctx context.Context, packID string) ([]Document, 
 
 // DocumentContent returns the parsed text, empty if not parsed.
 func (s *Store) DocumentContent(ctx context.Context, id string) (string, error) {
-	return scalar[string](s.pool, ctx, "document content", `SELECT coalesce(parsed_content, '') FROM documents WHERE id = $1`, id)
+	return scalar[string](ctx, s.pool, "document content", `SELECT coalesce(parsed_content, '') FROM documents WHERE id = $1`, id)
 }
 
 func (s *Store) GetRun(ctx context.Context, id string) (ReviewRun, error) {
-	return one(s.pool, ctx, scanRun, "review run", runSelect+` WHERE r.id = $1`, id)
+	return one(ctx, s.pool, scanRun, "review run", runSelect+` WHERE r.id = $1`, id)
 }
 
 func (s *Store) ListRuns(ctx context.Context, packID string) ([]ReviewRun, error) {
-	return many(s.pool, ctx, scanRun, "review runs", runSelect+` WHERE r.pack_id = $1 ORDER BY r.created_at DESC`, packID)
+	return many(ctx, s.pool, scanRun, "review runs", runSelect+` WHERE r.pack_id = $1 ORDER BY r.created_at DESC`, packID)
 }
 
 // LatestRun returns the pack's newest run, or ErrNotFound.
 func (s *Store) LatestRun(ctx context.Context, packID string) (ReviewRun, error) {
-	return one(s.pool, ctx, scanRun, "latest review run", runSelect+` WHERE r.pack_id = $1 ORDER BY r.created_at DESC LIMIT 1`, packID)
+	return one(ctx, s.pool, scanRun, "latest review run", runSelect+` WHERE r.pack_id = $1 ORDER BY r.created_at DESC LIMIT 1`, packID)
 }
 
 func (s *Store) GetIssue(ctx context.Context, id string) (Issue, error) {
-	return one(s.pool, ctx, scanIssue, "issue", issueSelect+` WHERE i.id = $1`, id)
+	return one(ctx, s.pool, scanIssue, "issue", issueSelect+` WHERE i.id = $1`, id)
 }
 
 // IssuesByID returns the issues with the given ids, keyed by id.
 func (s *Store) IssuesByID(ctx context.Context, ids []string) (map[string]Issue, error) {
-	list, err := many(s.pool, ctx, scanIssue, "issues", issueSelect+` WHERE i.id = ANY($1::uuid[])`, ids)
+	list, err := many(ctx, s.pool, scanIssue, "issues", issueSelect+` WHERE i.id = ANY($1::uuid[])`, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -224,11 +224,11 @@ func (s *Store) IssuesSnapshot(ctx context.Context, packID string) ([]Issue, int
 		return nil, 0, fmt.Errorf("beginning snapshot: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	issues, err := many(tx, ctx, scanIssue, "issues", issueSelect+` WHERE i.pack_id = $1 ORDER BY ce.created_at, i.id`, packID)
+	issues, err := many(ctx, tx, scanIssue, "issues", issueSelect+` WHERE i.pack_id = $1 ORDER BY ce.created_at, i.id`, packID)
 	if err != nil {
 		return nil, 0, err
 	}
-	cursor, err := scalar[int64](tx, ctx, "event cursor", `SELECT coalesce(max(seq), 0) FROM issue_events WHERE pack_id = $1`, packID)
+	cursor, err := scalar[int64](ctx, tx, "event cursor", `SELECT coalesce(max(seq), 0) FROM issue_events WHERE pack_id = $1`, packID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -236,13 +236,13 @@ func (s *Store) IssuesSnapshot(ctx context.Context, packID string) ([]Issue, int
 }
 
 func (s *Store) IssueEvents(ctx context.Context, issueID string) ([]IssueEvent, error) {
-	return many(s.pool, ctx, scanEvent, "issue events", eventSelect+` WHERE e.issue_id = $1 ORDER BY e.version`, issueID)
+	return many(ctx, s.pool, scanEvent, "issue events", eventSelect+` WHERE e.issue_id = $1 ORDER BY e.version`, issueID)
 }
 
 // IssueEventsAfter returns up to limit events of a pack with seq > after,
 // in seq order.
 func (s *Store) IssueEventsAfter(ctx context.Context, packID string, after int64, limit int) ([]IssueEvent, error) {
-	return many(s.pool, ctx, scanEvent, "issue events",
+	return many(ctx, s.pool, scanEvent, "issue events",
 		eventSelect+` WHERE e.pack_id = $1 AND e.seq > $2 ORDER BY e.seq LIMIT $3`, packID, after, limit)
 }
 
@@ -254,7 +254,7 @@ func (s *Store) PackIDOf(ctx context.Context, table, id string) (string, error) 
 	default:
 		return "", fmt.Errorf("PackIDOf: unexpected table %q", table)
 	}
-	return scalar[string](s.pool, ctx, "pack id", `SELECT pack_id FROM `+table+` WHERE id = $1`, id)
+	return scalar[string](ctx, s.pool, "pack id", `SELECT pack_id FROM `+table+` WHERE id = $1`, id)
 }
 
 // ---- Writes outside a pack lock -------------------------------------------------

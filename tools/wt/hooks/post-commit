@@ -2,9 +2,10 @@
 #
 # Restarts the committing worktree's local API so its deployment tracks the branch.
 #
-# Installed as .git/hooks/post-commit by `wt install-hooks`. Worktrees share the primary checkout's
-# hooks directory, so this single hook serves every environment. It is a no-op in the primary
-# checkout and in any worktree that has no running environment.
+# Installed into the repository's hooks directory (core.hooksPath if set, else .git/hooks) by
+# `wt install-hooks`. Worktrees share the primary checkout's hooks directory, so this single hook
+# serves every environment. It is a no-op in the primary checkout and in any worktree that has no
+# running environment.
 #
 # Any hook that was already installed is moved aside to post-commit.pre-wt at install time and
 # chain-called here first, so installing `wt` never disables it. We exit with that hook's status; git ignores a post-commit exit code, but the status is the

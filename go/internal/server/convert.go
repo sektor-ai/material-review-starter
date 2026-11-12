@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/hex"
-	"encoding/json"
 	"log/slog"
 	"time"
 
@@ -244,17 +243,7 @@ func changeValue(field string, v any) *structpb.Value {
 			return structpb.NewStringValue(severities[store.IssueSeverity(s)].String())
 		}
 	}
-	// Values read back from jsonb are already plain JSON types. Values built
-	// in this process (SpecRef) are normalised through JSON first.
-	if _, ok := v.(store.SpecRef); ok {
-		b, err := json.Marshal(v)
-		if err == nil {
-			var m map[string]any
-			if json.Unmarshal(b, &m) == nil {
-				v = m
-			}
-		}
-	}
+	// Values are read back from jsonb, so they are already plain JSON types.
 	out, err := structpb.NewValue(v)
 	if err != nil {
 		slog.Warn("change value does not convert", "field", field, "err", err)

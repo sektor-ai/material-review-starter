@@ -29,7 +29,7 @@ ts/             pnpm workspace (frontend)
   apps/web/       React + Vite
   packages/api/   generated TS from proto/ (src/gen/, do not edit) re-exported as @app/api
 terraform/
-  modules/        reusable modules (api = Cloud Run service + SA + secret access)
+  modules/        reusable modules (api = Cloud Run service + migrate job + SA + secret access)
   envs/dev/       one root module per environment, state in GCS
 tools/wt/       bash: per-branch worktree environments (see tools/wt/CLAUDE.md)
 samples/        sample submittals (input data, not code)
@@ -51,6 +51,7 @@ make lint         # buf lint, go vet, gofmt, tsc, terraform fmt
 make test         # go test ./... and vitest
 make breaking     # buf breaking against main
 make tf-plan ENV=dev
+make cloud-migrate ENV=dev  # run the Cloud Run migrate job and wait (before rolling the service)
 make wt <cmd> <slug>   # worktree environments; tools/wt/wt.sh for anything with a --flag
 make test-wt      # the wt tool's own test suites
 ```

@@ -25,10 +25,10 @@ func (s *Store) InPack(ctx context.Context, packID string, fn func(*PackTx) erro
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := scalar[int](tx, ctx, "pack lock", `SELECT 1 FROM packs WHERE id = $1 FOR UPDATE`, packID); err != nil {
+	if _, err := scalar[int](ctx, tx, "pack lock", `SELECT 1 FROM packs WHERE id = $1 FOR UPDATE`, packID); err != nil {
 		return err
 	}
-	pack, err := one(tx, ctx, scanPack, "pack", packSelect+` WHERE p.id = $1`, packID)
+	pack, err := one(ctx, tx, scanPack, "pack", packSelect+` WHERE p.id = $1`, packID)
 	if err != nil {
 		return err
 	}
@@ -46,7 +46,7 @@ func (t *PackTx) Pack() Pack { return t.pack }
 
 // ReloadPack re-reads the pack, including writes made in this transaction.
 func (t *PackTx) ReloadPack(ctx context.Context) (Pack, error) {
-	return one(t.tx, ctx, scanPack, "pack", packSelect+` WHERE p.id = $1`, t.pack.ID)
+	return one(ctx, t.tx, scanPack, "pack", packSelect+` WHERE p.id = $1`, t.pack.ID)
 }
 
 func (t *PackTx) UpdatePackDetails(ctx context.Context, title, designBasis *string) error {
@@ -118,17 +118,17 @@ func (t *PackTx) InsertDocument(ctx context.Context, d NewDocument) (Document, e
 	if err != nil {
 		return Document{}, fmt.Errorf("inserting document: %w", err)
 	}
-	return one(t.tx, ctx, scanDocument, "document", documentSelect+` WHERE d.id = $1`, d.ID)
+	return one(ctx, t.tx, scanDocument, "document", documentSelect+` WHERE d.id = $1`, d.ID)
 }
 
 // DocumentInPack returns a document of this pack, or ErrNotFound.
 func (t *PackTx) DocumentInPack(ctx context.Context, id string) (Document, error) {
-	return one(t.tx, ctx, scanDocument, "document", documentSelect+` WHERE d.id = $1 AND d.pack_id = $2`, id, t.pack.ID)
+	return one(ctx, t.tx, scanDocument, "document", documentSelect+` WHERE d.id = $1 AND d.pack_id = $2`, id, t.pack.ID)
 }
 
 // ReadyDocumentCount counts the pack's READY documents.
 func (t *PackTx) ReadyDocumentCount(ctx context.Context) (int, error) {
-	return scalar[int](t.tx, ctx, "ready documents",
+	return scalar[int](ctx, t.tx, "ready documents",
 		`SELECT count(*) FROM documents WHERE pack_id = $1 AND status = 'ready'`, t.pack.ID)
 }
 
@@ -136,7 +136,7 @@ func (t *PackTx) ReadyDocumentCount(ctx context.Context) (int, error) {
 
 // Issue returns an issue of this pack, or ErrNotFound.
 func (t *PackTx) Issue(ctx context.Context, id string) (Issue, error) {
-	return one(t.tx, ctx, scanIssue, "issue", issueSelect+` WHERE i.id = $1 AND i.pack_id = $2`, id, t.pack.ID)
+	return one(ctx, t.tx, scanIssue, "issue", issueSelect+` WHERE i.id = $1 AND i.pack_id = $2`, id, t.pack.ID)
 }
 
 // InsertIssue inserts a new issue at version 1 and returns its id. The
@@ -198,30 +198,30 @@ func (t *PackTx) AppendIssueEvent(ctx context.Context, e IssueEvent) (IssueEvent
 	if err != nil {
 		return IssueEvent{}, fmt.Errorf("appending issue event: %w", err)
 	}
-	return one(t.tx, ctx, scanEvent, "issue event", eventSelect+` WHERE e.seq = $1`, seq)
+	return one(ctx, t.tx, scanEvent, "issue event", eventSelect+` WHERE e.seq = $1`, seq)
 }
 
 func (t *PackTx) OpenIssueCount(ctx context.Context) (int, error) {
-	return scalar[int](t.tx, ctx, "open issues",
+	return scalar[int](ctx, t.tx, "open issues",
 		`SELECT count(*) FROM issues WHERE pack_id = $1 AND status = 'open'`, t.pack.ID)
 }
 
 // ---- Review runs -------------------------------------------------------------------
 
 func (t *PackTx) HasSucceededRun(ctx context.Context) (bool, error) {
-	return scalar[bool](t.tx, ctx, "succeeded runs",
+	return scalar[bool](ctx, t.tx, "succeeded runs",
 		`SELECT EXISTS (SELECT 1 FROM review_runs WHERE pack_id = $1 AND status = 'succeeded')`, t.pack.ID)
 }
 
 // ActiveRun returns the pack's queued or running run, or ErrNotFound.
 func (t *PackTx) ActiveRun(ctx context.Context) (ReviewRun, error) {
-	return one(t.tx, ctx, scanRun, "active run",
+	return one(ctx, t.tx, scanRun, "active run",
 		runSelect+` WHERE r.pack_id = $1 AND r.status IN ('queued', 'running')`, t.pack.ID)
 }
 
 // Run returns a run of this pack, or ErrNotFound.
 func (t *PackTx) Run(ctx context.Context, id string) (ReviewRun, error) {
-	return one(t.tx, ctx, scanRun, "review run", runSelect+` WHERE r.id = $1 AND r.pack_id = $2`, id, t.pack.ID)
+	return one(ctx, t.tx, scanRun, "review run", runSelect+` WHERE r.id = $1 AND r.pack_id = $2`, id, t.pack.ID)
 }
 
 // InsertRun queues a review run. ErrRunActive if one is already active.

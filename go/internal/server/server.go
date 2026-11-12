@@ -39,7 +39,7 @@ func New(d Deps) http.Handler {
 	// Everything else requires a signed-in user.
 	authed := connect.WithInterceptors(&authInterceptor{auth: d.Auth})
 	api.Handle(packv1connect.NewPackServiceHandler(
-		&PackHandler{packs: d.Packs, docs: d.Documents, issues: d.Issues, hub: d.Hub, st: d.Store},
+		&PackHandler{packs: d.Packs, docs: d.Documents, hub: d.Hub, st: d.Store},
 		authed,
 		// Room for a MaxDocumentBytes upload plus the rest of the message.
 		connect.WithReadMaxBytes(service.MaxDocumentBytes+1<<20),

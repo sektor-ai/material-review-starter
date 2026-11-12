@@ -113,7 +113,7 @@ esac
 # only that it is not the list error.
 for cmd in "${SINGLE_ENV_COMMANDS[@]}"; do
 	single=$(wt_stderr "$cmd" glazing)
-	case ${single#*|} in
+	case $single in
 	*'takes one environment'*) bad "wt ${cmd} refused a single environment as a list: '${single#*|}'" ;;
 	'0|'*) bad "wt ${cmd} exited 0 against an empty state root" ;;
 	*) ok "wt ${cmd} accepts a single environment" ;;
@@ -137,7 +137,7 @@ done
 # A missing environment is a usage error, never bash's `unbound variable`.
 for cmd in "${NEEDS_ENV_COMMANDS[@]}"; do
 	result=$(wt_stderr "$cmd")
-	case ${result#*|} in
+	case $result in
 	'0|'*) bad "wt ${cmd} with no environment exited 0" ;;
 	*'unbound variable'*) bad "wt ${cmd} with no environment died with a shell error: '${result#*|}'" ;;
 	*"usage: wt ${cmd}"*) ok "wt ${cmd} with no environment prints usage" ;;

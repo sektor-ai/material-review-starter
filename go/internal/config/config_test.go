@@ -145,7 +145,7 @@ func TestFindEnvFileStopsAtRepoRoot(t *testing.T) {
 func TestLoadAgentNeedsOnlyAgentSettings(t *testing.T) {
 	path := writeFile(t, "AGENT_ID=agent_1\nENVIRONMENT_ID=env_1\n")
 	t.Setenv("ENV_FILE", path)
-	for _, name := range []string{"DATABASE_URL", "S3_ENDPOINT", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"} {
+	for _, name := range []string{"DATABASE_URL", "S3_ENDPOINT", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET", "AGENT_ID", "ENVIRONMENT_ID"} {
 		t.Setenv(name, "")
 		os.Unsetenv(name)
 	}

@@ -200,10 +200,13 @@ Generated artefacts live outside the worktree, so nothing can be committed by ac
   `exec`'d rather than `go run`, which does not forward SIGTERM and would orphan a server on the port.
 - **Every Go command finds its settings through `ENV_FILE`.** `internal/config` reads `ENV_FILE` when
   set — and its values then override anything exported in the shell, so a stray `DATABASE_URL` cannot
-  send an environment to the primary's database — else walks up for `.env` (which never overrides). A worktree has no `.env` of its own (it is gitignored), so the
-  process-compose file, `resources_seed` and `devenv` all pass `ENV_FILE` explicitly. `app.env` is
-  *copied* from the primary and rewritten (DATABASE_URL, S3_BUCKET, PORT, COOKIE_SECURE) rather than
-  templated, so the API key it carries is never duplicated into a tracked file. The rewrite matches
+  send an environment to the primary's database — else walks up (no further than the repository
+  root) for a `.env`, whose values never override. A worktree has no `.env` of its own (it is
+  gitignored), so the process-compose file, `resources_seed` and `devenv` all pass `ENV_FILE`
+  explicitly. `agent-setup` refuses under `ENV_FILE`: run it from the primary, then
+  `wt recreate-config <slug>`. `app.env` is *copied* from the primary and rewritten (DATABASE_URL,
+  S3_BUCKET, PORT, COOKIE_SECURE) rather than templated, so the API key it carries is never
+  duplicated into a tracked file. The rewrite matches
   every line shape the loader accepts (`KEY=`, `KEY = `, `export KEY=`), and `render_env` then checks
   that every definition of DATABASE_URL and S3_BUCKET carries the environment's own value, refusing to
   render otherwise (`test_render.sh`).
