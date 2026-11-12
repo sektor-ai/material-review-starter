@@ -857,7 +857,11 @@ worktree_remove() {
 		# The worktree may already be half-removed — e.g. a manual `git worktree remove --force` that
 		# deregistered it from git but left the directory because running processes held files open.
 		# cmd_down has since stopped them, so clean the directory up directly and prune git's metadata.
-		# The guard keeps rm -rf strictly to a `<primary>-<slug>` sibling, never the primary or root.
+		# Only under --force: without it, git refusing is exactly the signal that there is something
+		# in there worth keeping, and a fallback that deletes it would defeat the refusal. The guard
+		# keeps rm -rf strictly to a `<primary>-<slug>` sibling, never the primary or root.
+		[[ -n $force ]] ||
+			die "git could not remove ${path}; look inside, then rerun with --force to delete it regardless"
 		warn "git worktree remove failed; cleaning up ${path} directly"
 		[[ -n $path && $path == "$(primary_root)${WORKTREE_DIR_SEPARATOR}"* && -e $path ]] && rm -rf "$path"
 		git -C "$(primary_root)" worktree prune
@@ -905,11 +909,21 @@ cmd_rm() {
 
 	# A promoted environment's work lives in the primary checkout, so that is where unsaved edits would
 	# be — the recorded worktree path is gone, and testing it would report every promoted environment as
-	# dirty and refuse to remove any of them.
+	# dirty and refuse to remove any of them. Untracked files count: they die with the worktree too.
 	local dirty_at=$path
 	is_promoted "$slug" && dirty_at=$(primary_root)
-	if [[ -z $force ]] && ! git -C "$dirty_at" diff --quiet HEAD 2>/dev/null; then
-		die "${dirty_at} has uncommitted changes; commit them or pass --force"
+	if [[ -z $force ]] && has_local_work "$dirty_at"; then
+		die "${dirty_at} has uncommitted or untracked changes; commit them or pass --force"
+	fi
+
+	# Deleting the branch below is `-D`, because a squash-merged branch never looks merged to git.
+	# So without --force, refuse while the branch holds commits that exist nowhere else. A promoted
+	# environment keeps its branch, so there is nothing to check.
+	if [[ -z $force ]] && ! is_promoted "$slug"; then
+		local unpushed
+		unpushed=$(unpushed_commits "$branch")
+		((unpushed == 0)) ||
+			die "${branch} has ${unpushed} commit(s) on no remote branch (never pushed, or squash-merged with the branch deleted); push them, or pass --force to delete them"
 	fi
 
 	env_teardown "$slug" "$force"
@@ -1187,12 +1201,29 @@ cmd_resume() {
 	exec claude --resume "$id"
 }
 
-# has_uncommitted reports whether a worktree has uncommitted tracked changes. A gone directory has
-# nothing to protect, so it returns false.
+# has_uncommitted reports whether a tree has uncommitted *tracked* changes. Used only where untracked
+# files are harmless: a fast-forward of the base branch leaves them alone. A gone directory has nothing
+# to protect, so it returns false.
 has_uncommitted() {
 	local path=$1
 	[[ -d $path ]] || return 1
 	! git -C "$path" diff --quiet HEAD 2>/dev/null
+}
+
+# has_local_work reports whether a tree holds anything that removing it would lose: tracked changes
+# *or* untracked files (ignored ones, like node_modules, do not count). This is the check every
+# destructive path uses — `rm`, `gc`, `merge` — the same one `promote` has always used.
+has_local_work() {
+	local path=$1
+	[[ -d $path ]] || return 1
+	[[ -n $(git -C "$path" status --porcelain 2>/dev/null) ]]
+}
+
+# unpushed_commits prints how many commits on a local branch are reachable from no remote-tracking
+# branch — work that would be gone for good if the branch were deleted.
+unpushed_commits() {
+	local branch=$1
+	git -C "$(primary_root)" rev-list --count "refs/heads/${branch}" --not --remotes 2>/dev/null || printf '0\n'
 }
 
 # cmd_gc removes every environment whose pull request has merged or closed. It is safe to run
@@ -1219,8 +1250,8 @@ cmd_gc() {
 			is_promoted "$slug" && path=$(primary_root)
 			if [[ -n $dry_run ]]; then
 				printf 'would remove %s (PR %s)\n' "$slug" "$pr"
-			elif has_uncommitted "$path"; then
-				warn "keeping ${slug} (PR ${pr}) — uncommitted changes; remove with: wt rm ${slug} --force"
+			elif has_local_work "$path"; then
+				warn "keeping ${slug} (PR ${pr}) — uncommitted or untracked changes; remove with: wt rm ${slug} --force"
 			else
 				log "PR for ${slug} is ${pr} — removing"
 				cmd_rm "$slug" --force
@@ -1308,10 +1339,10 @@ cmd_merge() {
 		path=$primary
 	}
 
-	# The environment's tree must be clean before we reap it: an uncommitted change there is not in the
-	# PR and would be lost with the worktree.
-	has_uncommitted "$path" &&
-		die "${path} has uncommitted changes; commit or stash them before merging"
+	# The environment's tree must be clean before we reap it: an uncommitted change or untracked file
+	# there is not in the PR and would be lost with the worktree.
+	has_local_work "$path" &&
+		die "${path} has uncommitted or untracked changes; commit, stash or remove them before merging"
 
 	pr=$(pr_state "$slug" force)
 	number=$(pr_number "$slug")

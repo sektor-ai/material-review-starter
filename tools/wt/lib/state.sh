@@ -330,8 +330,15 @@ state_resolve() {
 # pr_sync refreshes an environment's cached pull request record — state, number and URL, which one
 # `gh pr view` returns together — unless the cache is still within PR_STATE_TTL_SECONDS, so that
 # `wt list` does not hammer the API. Pass a non-empty second argument to refresh regardless.
+#
+# The PR is identified by number once one has been seen, not by branch name. `gc` and `merge` act on
+# its state, and a branch name can be reused: a new environment on `feature/x` must not be reaped
+# because an older `feature/x` PR was merged. Until a number is recorded the branch is looked up, and
+# a non-open PR created before this environment existed is ignored as belonging to an earlier use of
+# the name. An open PR is always this branch's current one, which keeps `--adopt` of a branch with
+# an existing PR working.
 pr_sync() {
-	local slug=$1 force=${2:-} cached checked_at now branch pr state number url
+	local slug=$1 force=${2:-} cached checked_at now branch recorded pr state number url
 	cached=$(state_get "$slug" '.pr.state // ""')
 	checked_at=$(state_get "$slug" '.pr.checked_at // 0')
 	now=$(date +%s)
@@ -341,9 +348,15 @@ pr_sync() {
 	fi
 
 	branch=$(state_get "$slug" '.branch')
+	recorded=$(state_get "$slug" '.pr.number // ""')
 	# `gh` exits non-zero when no PR exists for the branch; that is a normal state, not an error. An
 	# environment without a PR keeps a null number and URL, which is what `wt list` reads as "no link".
-	pr=$(gh pr view "$branch" --json state,number,url 2>/dev/null) || pr=''
+	if [[ -n $recorded ]]; then
+		pr=$(gh pr view "$recorded" --json state,number,url,createdAt 2>/dev/null) || pr=''
+	else
+		pr=$(gh pr view "$branch" --json state,number,url,createdAt 2>/dev/null) || pr=''
+		pr_predates_env "$slug" "$pr" && pr=''
+	fi
 	if [[ -n $pr ]]; then
 		state=$(printf '%s' "$pr" | jq -r '.state')
 		number=$(printf '%s' "$pr" | jq -r '.number')
@@ -357,6 +370,19 @@ pr_sync() {
 
 	state_set "$slug" '.pr.state = $state | .pr.number = $number | .pr.url = $url | .pr.checked_at = $now' \
 		--arg state "$state" --argjson number "$number" --arg url "$url" --argjson now "$now"
+}
+
+# pr_predates_env reports whether a looked-up PR is a stale one from an earlier use of the branch name:
+# not open, and created before the environment. Both timestamps are UTC ISO-8601 (`...Z`), so they
+# compare correctly as strings.
+pr_predates_env() {
+	local slug=$1 pr=$2 pr_state created env_created
+	[[ -n $pr ]] || return 1
+	pr_state=$(printf '%s' "$pr" | jq -r '.state')
+	[[ $pr_state != OPEN ]] || return 1
+	created=$(printf '%s' "$pr" | jq -r '.createdAt // ""')
+	env_created=$(state_get "$slug" '.created_at // ""')
+	[[ -n $created && -n $env_created && $created < $env_created ]]
 }
 
 # pr_state prints the GitHub PR state for an environment's branch (OPEN, MERGED, CLOSED or NONE).

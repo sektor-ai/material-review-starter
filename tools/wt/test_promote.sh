@@ -43,7 +43,13 @@ for stub in pnpm process-compose; do
 done
 # `gh` fails, which pr_sync reads as "this branch has no pull request" — the normal state for every
 # fixture here, and far quicker and more predictable than letting the real gh probe a bare file remote.
-printf '#!/bin/sh\nexit 1\n' >"$STUB_BIN/gh"
+# WT_TEST_GH_JSON, when set, is what `gh pr view` answers instead — the gc cases use it to report a
+# merged PR.
+cat >"$STUB_BIN/gh" <<'STUB'
+#!/bin/sh
+[ -n "${WT_TEST_GH_JSON:-}" ] || exit 1
+printf '%s\n' "$WT_TEST_GH_JSON"
+STUB
 # `go` covers both the API build (nothing to do) and `go run ./cmd/devenv`, whose dotenv output
 # resources.sh parses. The bare demote that adopts an unknown branch runs the real `wt create`, which
 # creates a database, migrates and seeds — so the stub answers devenv `names`/`create` the way the
@@ -491,6 +497,55 @@ primary=$(make_env removal gone)
 has_branch "$primary" 'feature/gone' && bad 'rm deletes the branch (promote keeps it)' ||
 	ok 'rm deletes the branch (promote keeps it)'
 check_eq 'main' "$(branch_of "$primary")" 'rm leaves the primary where it was'
+
+# ── rm and gc never destroy work that exists nowhere else ──────────────────────────────────────────
+echo
+echo 'wt rm / wt gc guards'
+
+# Untracked files die with the worktree, so they block rm exactly as tracked edits do.
+primary=$(make_env rmuntracked notes)
+printf 'scratch\n' >"$TMP_ROOT/rmuntracked-notes/notes.txt"
+# The message is asserted, not just the refusal: worktree_remove would also refuse later (git will not
+# remove a worktree with untracked files), but only after teardown had already dropped the database.
+# The up-front check is what keeps the environment whole.
+err=$( (cd "$primary" && "$WT" rm notes 2>&1) ) && bad 'rm refuses a worktree holding untracked files' || {
+	case $err in
+	*'uncommitted or untracked changes'*) ok 'rm refuses a worktree holding untracked files, before teardown' ;;
+	*) bad "rm refuses a worktree holding untracked files, before teardown (got: ${err})" ;;
+	esac
+}
+[[ -f "$TMP_ROOT/rmuntracked-notes/notes.txt" ]] && ok '  ...and the file survives' || bad '  ...and the file survives'
+
+# Commits that were never pushed would be gone with `branch -D`.
+primary=$(make_env rmunpushed local)
+printf 'work\n' >"$TMP_ROOT/rmunpushed-local/work.txt"
+git -C "$TMP_ROOT/rmunpushed-local" add work.txt
+git -C "$TMP_ROOT/rmunpushed-local" commit -qm 'never pushed'
+err=$( (cd "$primary" && "$WT" rm local 2>&1) ) && bad 'rm refuses a branch with unpushed commits' || {
+	case $err in
+	*'1 commit(s) on no remote branch'*) ok 'rm refuses a branch with unpushed commits, saying how many' ;;
+	*) bad "rm refuses a branch with unpushed commits, saying how many (got: ${err})" ;;
+	esac
+}
+has_branch "$primary" feature/local && ok '  ...and the branch survives' || bad '  ...and the branch survives'
+[[ -d "$TMP_ROOT/rmunpushed-local" ]] && ok '  ...and so does the worktree' || bad '  ...and so does the worktree'
+
+(cd "$primary" && "$WT" rm local --force >/dev/null 2>&1) || bad 'rm --force unexpectedly failed'
+has_branch "$primary" feature/local && bad '--force deletes it anyway' || ok '--force deletes it anyway'
+
+# gc runs unattended from a hook: a merged environment with untracked files is kept, not reaped.
+primary=$(make_env gcuntracked merged)
+printf 'scratch\n' >"$TMP_ROOT/gcuntracked-merged/notes.txt"
+WT_TEST_GH_JSON='{"state":"MERGED","number":1,"url":"https://example.test/pull/1","createdAt":"2999-01-01T00:00:00Z"}' \
+	bash -c 'cd "$1" && "$2" gc >/dev/null 2>&1' -- "$primary" "$WT" || bad 'gc unexpectedly failed'
+[[ -f "$TMP_ROOT/gcuntracked-merged/notes.txt" ]] && ok 'gc keeps a merged environment holding untracked files' ||
+	bad 'gc keeps a merged environment holding untracked files'
+[[ -f "$MR_WT_HOME/merged/env.json" ]] && ok '  ...and its record' || bad '  ...and its record'
+
+primary=$(make_env gcclean tidy)
+WT_TEST_GH_JSON='{"state":"MERGED","number":2,"url":"https://example.test/pull/2","createdAt":"2999-01-01T00:00:00Z"}' \
+	bash -c 'cd "$1" && "$2" gc >/dev/null 2>&1' -- "$primary" "$WT" || bad 'gc unexpectedly failed'
+[[ -f "$MR_WT_HOME/tidy/env.json" ]] && bad 'gc reaps a clean merged environment' || ok 'gc reaps a clean merged environment'
 
 echo
 if ((failures > 0)); then

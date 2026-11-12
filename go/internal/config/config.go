@@ -32,12 +32,20 @@ type S3 struct {
 	Bucket          string
 }
 
-// Load reads the env file (ENV_FILE if set, else the nearest .env walking up
-// from the working directory) into the process environment without
-// overriding variables that are already set, then builds a Config.
+// Load reads an env file into the process environment, then builds a Config.
+//
+// An explicit ENV_FILE wins over variables already exported: a worktree
+// environment (tools/wt) points ENV_FILE at its own settings, and a
+// DATABASE_URL left exported in the shell must not quietly send it to the
+// primary's database. A .env found by walking up is only a default, so it
+// never overrides what is already set.
 func Load() (Config, error) {
-	if path, ok := FindEnvFile(); ok {
-		if err := loadEnvFile(path); err != nil {
+	if path := os.Getenv("ENV_FILE"); path != "" {
+		if err := loadEnvFile(path, true); err != nil {
+			return Config{}, err
+		}
+	} else if path, ok := FindEnvFile(); ok {
+		if err := loadEnvFile(path, false); err != nil {
 			return Config{}, err
 		}
 	}
@@ -97,7 +105,9 @@ func FindEnvFile() (string, bool) {
 	}
 }
 
-func loadEnvFile(path string) error {
+// loadEnvFile sets each NAME=value from the file. With override false, names
+// already set in the environment keep their value.
+func loadEnvFile(path string, override bool) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", path, err)
@@ -114,9 +124,9 @@ func loadEnvFile(path string) error {
 		if !ok {
 			continue
 		}
-		name = strings.TrimSpace(name)
+		name = envName(name)
 		value = strings.Trim(strings.TrimSpace(value), `"'`)
-		if _, set := os.LookupEnv(name); !set {
+		if _, set := os.LookupEnv(name); override || !set {
 			os.Setenv(name, value)
 		}
 	}
@@ -140,7 +150,8 @@ func WriteEnvValues(path string, values map[string]string) error {
 	for name, value := range values {
 		replaced := false
 		for i, line := range lines {
-			if strings.HasPrefix(line, name+"=") {
+			lineName, _, ok := strings.Cut(strings.TrimSpace(line), "=")
+			if ok && envName(lineName) == name {
 				lines[i] = name + "=" + value
 				replaced = true
 			}
@@ -150,6 +161,16 @@ func WriteEnvValues(path string, values map[string]string) error {
 		}
 	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+}
+
+// envName normalises the left-hand side of a dotenv line: surrounding spaces
+// and a shell `export ` prefix are not part of the name.
+func envName(raw string) string {
+	name := strings.TrimSpace(raw)
+	if rest, ok := strings.CutPrefix(name, "export"); ok && rest != strings.TrimLeft(rest, " \t") {
+		name = strings.TrimSpace(rest)
+	}
+	return name
 }
 
 func splitEndpoint(raw string) (host string, useSSL bool) {

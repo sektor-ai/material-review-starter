@@ -19,19 +19,32 @@ render_template() {
 	envsubst "$vars" <"$template" >"$output"
 }
 
-# rewrite_env_var replaces a KEY=... line in a dotenv file, appending it when absent. The value is
-# always double-quoted (the Go loader strips the quotes), so the caller never has to know how the
-# source file happened to quote that key. awk is used rather than sed because sed treats & and \ in the
-# replacement text as backreferences.
+# rewrite_env_var replaces every KEY=... line in a dotenv file, appending one when absent. It matches
+# the forms the Go loader accepts — `KEY=`, `KEY = `, `export KEY=` — so no spelling of a key can slip
+# past the rewrite and keep the primary's value. The value is always double-quoted (the loader strips
+# the quotes). awk is used rather than sed because sed treats & and \ in the replacement text as
+# backreferences.
 rewrite_env_var() {
 	local file=$1 key=$2 value=$3 tmp
 	tmp=$(mktemp)
 
 	awk -v key="$key" -v value="$value" '
-		$0 ~ "^" key "=" { print key "=\"" value "\""; found = 1; next }
+		$0 ~ "^[ \t]*(export[ \t]+)?" key "[ \t]*=" { print key "=\"" value "\""; found = 1; next }
 		{ print }
 		END { if (!found) print key "=\"" value "\"" }
 	' "$file" >"$tmp" && mv "$tmp" "$file"
+}
+
+# require_env_var dies unless every definition of KEY in the file carries exactly the expected value.
+# It is the check that an environment's app.env really points at the environment's own resources: if
+# some line shape got past rewrite_env_var, the environment would run against the primary's database.
+require_env_var() {
+	local file=$1 key=$2 want=$3 bad
+	bad=$(awk -v key="$key" -v want="$key=\"$want\"" '
+		$0 ~ "^[ \t]*(export[ \t]+)?" key "[ \t]*=" && $0 != want { print NR ": " $0 }
+	' "$file")
+	[[ -z $bad ]] || die "${file} still sets ${key} to something else (line ${bad%%:*}); refusing to run this environment against the wrong ${key}"
+	grep -q "^${key}=" "$file" || die "${file} does not set ${key}"
 }
 
 # render_env renders app.env and process-compose.yml for an environment. `names` is devenv's dotenv
@@ -54,10 +67,16 @@ render_env() {
 	app_env="$dir/app.env"
 	cp "$src" "$app_env"
 	chmod 600 "$app_env"
-	rewrite_env_var "$app_env" DATABASE_URL "$(dotenv_value "$names" DATABASE_URL)"
-	rewrite_env_var "$app_env" S3_BUCKET "$(dotenv_value "$names" S3_BUCKET)"
+	local db_url bucket
+	db_url=$(dotenv_value "$names" DATABASE_URL)
+	bucket=$(dotenv_value "$names" S3_BUCKET)
+	[[ -n $db_url && -n $bucket ]] || die "devenv returned no DATABASE_URL or S3_BUCKET for ${slug}"
+	rewrite_env_var "$app_env" DATABASE_URL "$db_url"
+	rewrite_env_var "$app_env" S3_BUCKET "$bucket"
 	rewrite_env_var "$app_env" PORT "$WT_API_PORT"
 	rewrite_env_var "$app_env" COOKIE_SECURE false
+	require_env_var "$app_env" DATABASE_URL "$db_url"
+	require_env_var "$app_env" S3_BUCKET "$bucket"
 
 	render_template "$tools_dir/$TEMPLATE_DIR_NAME/process-compose.yml.tpl" "$dir/process-compose.yml"
 }

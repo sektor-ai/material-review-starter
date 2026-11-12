@@ -68,6 +68,8 @@ wt: ## Worktree environments: make wt <cmd> <slug> (no --flags; use tools/wt/wt.
 test-wt: ## Run the wt tool's own test suites (slow; not part of make test)
 	./tools/wt/test_slots.sh
 	./tools/wt/test_resolve.sh
+	./tools/wt/test_pr.sh
+	./tools/wt/test_render.sh
 	./tools/wt/test_env_args.sh
 	./tools/wt/test_promote.sh
 

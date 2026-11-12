@@ -26,7 +26,8 @@ wt url <slug> [service]           print service URLs (api|web); bare URL if serv
 wt path [slug]                    print a worktree's directory; the primary checkout if no slug
 wt cd [slug]                      cd there — shell function only (see below)
 wt logs <slug> [process]          follow a process log
-wt rm <slug> [--force]            stop, drop database and bucket, remove worktree and branch
+wt rm <slug> [--force]            stop, drop database and bucket, remove worktree and branch;
+                                  without --force, refuses uncommitted/untracked files or unpushed commits
 wt merge <slug>                   merge the PR (or accept one already merged from the web), prune the
   [--no-advance] [--keep-branch]  remote branch, advance main, reap the env, delete the local branch
 wt promote <slug>                 hand the branch to the primary checkout, to carry the work on by
@@ -195,10 +196,14 @@ Generated artefacts live outside the worktree, so nothing can be committed by ac
   so the post-commit restart applies a migration the commit added. The binaries are built and
   `exec`'d rather than `go run`, which does not forward SIGTERM and would orphan a server on the port.
 - **Every Go command finds its settings through `ENV_FILE`.** `internal/config` reads `ENV_FILE` when
-  set, else walks up for `.env`. A worktree has no `.env` of its own (it is gitignored), so the
+  set — and its values then override anything exported in the shell, so a stray `DATABASE_URL` cannot
+  send an environment to the primary's database — else walks up for `.env` (which never overrides). A worktree has no `.env` of its own (it is gitignored), so the
   process-compose file, `resources_seed` and `devenv` all pass `ENV_FILE` explicitly. `app.env` is
   *copied* from the primary and rewritten (DATABASE_URL, S3_BUCKET, PORT, COOKIE_SECURE) rather than
-  templated, so the API key it carries is never duplicated into a tracked file.
+  templated, so the API key it carries is never duplicated into a tracked file. The rewrite matches
+  every line shape the loader accepts (`KEY=`, `KEY = `, `export KEY=`), and `render_env` then checks
+  that every definition of DATABASE_URL and S3_BUCKET carries the environment's own value, refusing to
+  render otherwise (`test_render.sh`).
 - **`wt up` fails fast on a boot crash, and confirms the API actually serves.** It watches the api
   process (a crash surfaces its log tail in seconds) and, once the port opens, expects a 2xx from
   `/healthz` — which pings the database, so "up" means serving against its own DB.
@@ -214,7 +219,16 @@ Generated artefacts live outside the worktree, so nothing can be committed by ac
   runs `wt gc`. An existing hook of either name is moved to `<hook>.pre-wt` and chain-called first.
   `hook_is_ours` compares by inode (`-ef`), so it recognises the hook via a symlinked path.
 - **`wt gc` is safe to run unattended.** It reaps environments whose PR merged or closed, but keeps
-  (and flags) any worktree with uncommitted changes.
+  (and flags) any worktree with uncommitted changes or untracked files.
+- **Nothing destructive loses work that exists nowhere else.** `rm`, `gc` and `merge` check
+  `git status --porcelain` (untracked files included, ignored ones not), the same check `promote`
+  uses. `rm` without `--force` also refuses while the branch has commits on no remote branch, since
+  its `branch -D` (needed because squash-merged branches never look merged) would drop them. The
+  `rm -rf` fallback in `worktree_remove` runs only under `--force`.
+- **An environment's PR is pinned by number.** `gc` and `merge` act on PR state, and branch names get
+  reused. The first time a PR is seen its number is recorded and followed from then on; before that,
+  a non-open PR created before the environment is ignored as belonging to an earlier use of the name
+  (an open one is always current, so `--adopt` of a branch with a PR works). `test_pr.sh` pins this.
 - **`promote` marks the record before checking out, and records what the primary was on**, so a failed
   checkout still leaves `demote` able to rebuild, and `demote` returns the primary to where it was
   (detaching HEAD rather than guessing when nothing usable was recorded).
@@ -225,7 +239,7 @@ Generated artefacts live outside the worktree, so nothing can be committed by ac
 
 ## Files
 
-`make test-wt` runs all four test scripts; each also runs standalone. They are kept out of `make test`
+`make test-wt` runs all six test scripts; each also runs standalone. They are kept out of `make test`
 (`test_promote.sh` drives real `git worktree` operations). Nothing runs them automatically: there is no
 CI yet.
 
@@ -234,10 +248,13 @@ CI yet.
 - `test_slots.sh` — slot allocation and state-root resolution (throwaway `MR_WT_HOME`; no services)
 - `test_resolve.sh` — slug-vs-branch resolution and misses (throwaway `MR_WT_HOME`)
 - `test_promote.sh` — the promote/demote cycle, its guards, bare demote and its adopt fallback, the
-  `rm`/`promote` branch contract, and that adopt renders `app.env` onto the environment's own
-  database. Throwaway repo + bare `origin`; `pnpm`, `go` (including `go run ./cmd/devenv`),
+  `rm`/`promote` branch contract, that adopt renders `app.env` onto the environment's own database,
+  and that `rm`/`gc` keep untracked files and unpushed commits. Throwaway repo + bare `origin`; `pnpm`, `go` (including `go run ./cmd/devenv`),
   `process-compose` and `gh` are stubbed on `PATH`, so no database is touched
 - `test_env_args.sh` — the one-environment guard across every command that carries it
+- `test_pr.sh` — PR identity: stale PRs from a reused branch name are ignored, the number is pinned
+  once seen, adopted branches keep their open PR (`gh` stubbed)
+- `test_render.sh` — `app.env` rewriting across dotenv line shapes, and the check that backs it up
 - `lib/common.sh` — constants, logging, repo layout, validation
 - `lib/state.sh` — slot allocation and its lock, `env.json`, cached PR record, session recording
 - `lib/resources.sh` — `go/cmd/devenv` wrapper: database/bucket create, drop, migrate + seed
