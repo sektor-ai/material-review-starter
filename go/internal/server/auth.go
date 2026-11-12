@@ -13,7 +13,6 @@ import (
 	authv1 "github.com/sektor-ai/material-review-starter/go/gen/auth/v1"
 	"github.com/sektor-ai/material-review-starter/go/gen/auth/v1/authv1connect"
 	"github.com/sektor-ai/material-review-starter/go/internal/service"
-	"github.com/sektor-ai/material-review-starter/go/internal/store"
 )
 
 const sessionCookie = "session"
@@ -80,8 +79,4 @@ func sessionToken(header http.Header) string {
 		return ""
 	}
 	return c.Value
-}
-
-func toProtoUser(u store.User) *authv1.User {
-	return &authv1.User{Id: u.ID, Name: u.Name, Email: u.Email}
 }

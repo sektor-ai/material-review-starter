@@ -1,0 +1,205 @@
+syntax = "proto3";
+
+package pack.v1;
+
+import "auth/v1/auth.proto";
+import "google/protobuf/timestamp.proto";
+import "issue/v1/issue.proto";
+import "review/v1/review.proto";
+
+// PackService manages packs (material submittals) and their documents, and
+// streams live changes to a pack.
+service PackService {
+  // CreatePack fails with AlreadyExists if submittal_no is taken.
+  rpc CreatePack(CreatePackRequest) returns (CreatePackResponse) {}
+  // ListPacks returns all packs, newest first.
+  rpc ListPacks(ListPacksRequest) returns (ListPacksResponse) {}
+  // GetPack returns the pack with its documents and latest review run.
+  rpc GetPack(GetPackRequest) returns (GetPackResponse) {}
+  // UpdatePack edits the pack's descriptive fields. Status is not set here.
+  rpc UpdatePack(UpdatePackRequest) returns (UpdatePackResponse) {}
+  // ApprovePack marks a RESOLVED pack as APPROVED. It fails with
+  // FailedPrecondition in any other status. Approval is final.
+  rpc ApprovePack(ApprovePackRequest) returns (ApprovePackResponse) {}
+  // CancelPack marks an OPEN or RESOLVED pack as CANCELLED and cancels its
+  // queued or running review, if any. It fails with FailedPrecondition if
+  // the pack is already APPROVED or CANCELLED. Cancellation is final.
+  rpc CancelPack(CancelPackRequest) returns (CancelPackResponse) {}
+
+  // UploadDocument stores the original file and parses it. Markdown and
+  // plain text are parsed inline and return READY; other types return
+  // PROCESSING and become READY or FAILED later.
+  rpc UploadDocument(UploadDocumentRequest) returns (UploadDocumentResponse) {}
+  // GetDocument includes the parsed content. The original file is served
+  // by plain HTTP at GET /api/documents/{id}/original, not over Connect.
+  rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse) {}
+
+  // WatchPack streams live changes to one pack. On connect the server sends
+  // the pack's current state and latest run, then every issue event after
+  // after_seq (replayed from the database, then live), then later pack and
+  // run changes as they happen, with heartbeats in between. After a
+  // disconnect, reconnect with the seq of the last event received.
+  rpc WatchPack(WatchPackRequest) returns (stream WatchPackResponse) {}
+}
+
+// PackStatus moves between OPEN and RESOLVED automatically. APPROVED and
+// CANCELLED are set by an engineer and are final: once a pack is in either,
+// its documents, issues and details can no longer be changed and no review
+// can be started (FailedPrecondition). Status changes are not audited.
+enum PackStatus {
+  PACK_STATUS_UNSPECIFIED = 0;
+  // Not yet reviewed successfully, or has open issues.
+  PACK_STATUS_OPEN = 1;
+  // At least one review has succeeded and every issue is closed. Moves back
+  // to OPEN if an issue is reopened or added.
+  PACK_STATUS_RESOLVED = 2;
+  // Marked approved by an engineer.
+  PACK_STATUS_APPROVED = 3;
+  // Withdrawn by an engineer; the pack will not be processed.
+  PACK_STATUS_CANCELLED = 4;
+}
+
+enum DocumentStatus {
+  DOCUMENT_STATUS_UNSPECIFIED = 0;
+  DOCUMENT_STATUS_PROCESSING = 1;
+  DOCUMENT_STATUS_READY = 2;
+  DOCUMENT_STATUS_FAILED = 3;
+}
+
+message Pack {
+  string id = 1;
+  // "S-001"
+  string submittal_no = 2;
+  string title = 3;
+  // Requirements the submittal was designed for, e.g. "Suspended slabs
+  // Grade C40, exposure class X1, 25 mm cover".
+  string design_basis = 4;
+  PackStatus status = 5;
+  auth.v1.User created_by = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+  // Output only. Set when APPROVED.
+  auth.v1.User approved_by = 9;
+  google.protobuf.Timestamp approved_at = 10;
+  // Output only, for list views.
+  int32 document_count = 11;
+  int32 open_issue_count = 12;
+  // Output only. Set when CANCELLED.
+  auth.v1.User cancelled_by = 13;
+  google.protobuf.Timestamp cancelled_at = 14;
+  string cancel_reason = 15;
+}
+
+message Document {
+  string id = 1;
+  string pack_id = 2;
+  string filename = 3;
+  string title = 4;
+  string mime_type = 5;
+  int64 size_bytes = 6;
+  // Hex-encoded SHA-256 of the original file.
+  string sha256 = 7;
+  DocumentStatus status = 8;
+  // Set when FAILED.
+  string parse_error = 9;
+  auth.v1.User created_by = 10;
+  google.protobuf.Timestamp created_at = 11;
+}
+
+message CreatePackRequest {
+  string submittal_no = 1;
+  string title = 2;
+  string design_basis = 3;
+}
+
+message CreatePackResponse {
+  Pack pack = 1;
+}
+
+message ListPacksRequest {}
+
+message ListPacksResponse {
+  repeated Pack packs = 1;
+}
+
+message GetPackRequest {
+  string id = 1;
+}
+
+message GetPackResponse {
+  Pack pack = 1;
+  repeated Document documents = 2;
+  // Unset if the pack has never been reviewed.
+  review.v1.ReviewRun latest_run = 3;
+}
+
+message UpdatePackRequest {
+  string id = 1;
+  optional string title = 2;
+  optional string design_basis = 3;
+}
+
+message UpdatePackResponse {
+  Pack pack = 1;
+}
+
+message ApprovePackRequest {
+  string id = 1;
+}
+
+message ApprovePackResponse {
+  Pack pack = 1;
+}
+
+message CancelPackRequest {
+  string id = 1;
+  // Optional, shown on the pack.
+  string reason = 2;
+}
+
+message CancelPackResponse {
+  Pack pack = 1;
+}
+
+message UploadDocumentRequest {
+  string pack_id = 1;
+  string filename = 2;
+  string mime_type = 3;
+  // The server rejects files over 20 MB.
+  bytes content = 4;
+  // Defaults to the filename without its extension.
+  string title = 5;
+}
+
+message UploadDocumentResponse {
+  Document document = 1;
+}
+
+message GetDocumentRequest {
+  string id = 1;
+}
+
+message GetDocumentResponse {
+  Document document = 1;
+  string parsed_content = 2;
+}
+
+message WatchPackRequest {
+  string pack_id = 1;
+  // ListIssuesResponse.cursor_seq, or the seq of the last event received.
+  int64 after_seq = 2;
+}
+
+message WatchPackResponse {
+  oneof update {
+    issue.v1.IssueChanged issue_changed = 1;
+    // Full run snapshot; not replayed, only the latest state is sent.
+    review.v1.ReviewRun run_updated = 2;
+    // Full pack snapshot, sent when status or counts change.
+    Pack pack_updated = 3;
+    Heartbeat heartbeat = 4;
+  }
+}
+
+// Heartbeat is sent every ~15 s so proxies don't close an idle stream.
+message Heartbeat {}

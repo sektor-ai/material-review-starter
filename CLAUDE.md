@@ -136,6 +136,9 @@ Email/password with bcrypt. Sessions are random tokens in an HttpOnly `session` 
 - Import API types and service descriptors from `@app/api` only.
 - Server state goes through TanStack Query hooks wrapping the Connect client (see `src/session.ts`). Components don't call the client directly.
 - Tests: vitest next to the component.
+- Dev mock: `src/mock/` serves every Connect service from an in-browser store, for UI work ahead of the
+  backend. Turn it on with `?mock=1` (off with `?mock=0`; remembered per browser) or `VITE_MOCK_API=1`;
+  `&as=bob` signs that tab in as Bob, and tabs share state live. Dev only, never in a production build.
 
 ## Terraform (terraform/)
 

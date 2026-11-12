@@ -22,6 +22,9 @@ var ErrNotFound = errors.New("not found")
 
 type Store struct {
 	pool *pgxpool.Pool
+	db   *sql.DB // database/sql view of pool, for goose
+	// migrations knows the embedded migrations and reads the applied version.
+	migrations *goose.Provider
 }
 
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
@@ -33,41 +36,69 @@ func Open(ctx context.Context, databaseURL string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("pinging postgres: %w", err)
 	}
-	return &Store{pool: pool}, nil
+	db := stdlib.OpenDBFromPool(pool)
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, mustSub(migrations, "migrations"))
+	if err != nil {
+		db.Close()
+		pool.Close()
+		return nil, fmt.Errorf("creating migration provider: %w", err)
+	}
+	return &Store{pool: pool, db: db, migrations: provider}, nil
 }
 
-func (s *Store) Close() { s.pool.Close() }
-
-// Ping checks that the database answers.
-func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
+func (s *Store) Close() {
+	s.db.Close()
+	s.pool.Close()
+}
 
 // Migrate applies all pending migrations from migrations/.
 func (s *Store) Migrate(ctx context.Context) error {
-	db := stdlib.OpenDBFromPool(s.pool)
-	defer db.Close()
-	return migrate(ctx, db)
-}
-
-func migrate(ctx context.Context, db *sql.DB) error {
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, mustSub(migrations, "migrations"))
-	if err != nil {
-		return fmt.Errorf("creating migration provider: %w", err)
-	}
-	if _, err := provider.Up(ctx); err != nil {
+	if _, err := s.migrations.Up(ctx); err != nil {
 		return fmt.Errorf("applying migrations: %w", err)
 	}
 	return nil
 }
 
+// ErrSchemaBehind means the database has not had every migration this binary
+// ships with. The API's /healthz reports it, so a revision deployed ahead of
+// its migrations never becomes ready (cmd/migrate, or the Cloud Run migrate
+// job, has to run first).
+var ErrSchemaBehind = errors.New("database schema is behind this build")
+
+// Ready reports whether the database answers and has every migration applied.
+func (s *Store) Ready(ctx context.Context) error {
+	if err := s.pool.Ping(ctx); err != nil {
+		return fmt.Errorf("pinging postgres: %w", err)
+	}
+	current, target, err := s.migrations.GetVersions(ctx)
+	if err != nil {
+		return fmt.Errorf("reading schema version: %w", err)
+	}
+	if current < target {
+		return fmt.Errorf("%w: database at version %d, build expects %d; run migrations", ErrSchemaBehind, current, target)
+	}
+	return nil
+}
+
+type UserKind string
+
+const (
+	UserKindHuman UserKind = "human"
+	UserKindAgent UserKind = "agent"
+)
+
+// User is a row of auth.users. The JSON tags let queries return users as
+// jsonb objects (see userJSON).
 type User struct {
-	ID           string
-	Name         string
-	Email        string
-	PasswordHash string
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Email        string   `json:"email"` // empty for the agent
+	Kind         UserKind `json:"kind"`
+	PasswordHash string   `json:"-"`
 }
 
 func (s *Store) CreateUser(ctx context.Context, name, email, passwordHash string) (User, error) {
-	u := User{Name: name, Email: email, PasswordHash: passwordHash}
+	u := User{Name: name, Email: email, Kind: UserKindHuman, PasswordHash: passwordHash}
 	err := s.pool.QueryRow(ctx,
 		`INSERT INTO auth.users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id`,
 		name, email, passwordHash,
@@ -81,8 +112,9 @@ func (s *Store) CreateUser(ctx context.Context, name, email, passwordHash string
 func (s *Store) UserByEmail(ctx context.Context, email string) (User, error) {
 	var u User
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, name, email, password_hash FROM auth.users WHERE email = $1`, email,
-	).Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash)
+		`SELECT id, name, email, password_hash, kind FROM auth.users
+		  WHERE lower(email) = lower($1) AND kind = 'human'`, email,
+	).Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.Kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
@@ -107,10 +139,10 @@ func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, userID stri
 func (s *Store) UserBySession(ctx context.Context, tokenHash []byte) (User, error) {
 	var u User
 	err := s.pool.QueryRow(ctx,
-		`SELECT u.id, u.name, u.email, u.password_hash
+		`SELECT u.id, u.name, u.email, u.password_hash, u.kind
 		   FROM auth.sessions s JOIN auth.users u ON u.id = s.user_id
-		  WHERE s.token_hash = $1 AND s.expires_at > now()`, tokenHash,
-	).Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash)
+		  WHERE s.token_hash = $1 AND s.expires_at > now() AND u.kind = 'human'`, tokenHash,
+	).Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.Kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}

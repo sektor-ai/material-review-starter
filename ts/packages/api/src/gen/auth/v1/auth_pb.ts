@@ -2,17 +2,20 @@
 // @generated from file auth/v1/auth.proto (package auth.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file auth/v1/auth.proto.
  */
 export const file_auth_v1_auth: GenFile = /*@__PURE__*/
-  fileDesc("ChJhdXRoL3YxL2F1dGgucHJvdG8SB2F1dGgudjEiLwoEVXNlchIKCgJpZBgBIAEoCRIMCgRuYW1lGAIgASgJEg0KBWVtYWlsGAMgASgJIjAKDVNpZ25JblJlcXVlc3QSDQoFZW1haWwYASABKAkSEAoIcGFzc3dvcmQYAiABKAkiLQoOU2lnbkluUmVzcG9uc2USGwoEdXNlchgBIAEoCzINLmF1dGgudjEuVXNlciIQCg5TaWduT3V0UmVxdWVzdCIRCg9TaWduT3V0UmVzcG9uc2UiDgoMR2V0TWVSZXF1ZXN0IiwKDUdldE1lUmVzcG9uc2USGwoEdXNlchgBIAEoCzINLmF1dGgudjEuVXNlcjLEAQoLQXV0aFNlcnZpY2USOwoGU2lnbkluEhYuYXV0aC52MS5TaWduSW5SZXF1ZXN0GhcuYXV0aC52MS5TaWduSW5SZXNwb25zZSIAEj4KB1NpZ25PdXQSFy5hdXRoLnYxLlNpZ25PdXRSZXF1ZXN0GhguYXV0aC52MS5TaWduT3V0UmVzcG9uc2UiABI4CgVHZXRNZRIVLmF1dGgudjEuR2V0TWVSZXF1ZXN0GhYuYXV0aC52MS5HZXRNZVJlc3BvbnNlIgBCmQEKC2NvbS5hdXRoLnYxQglBdXRoUHJvdG9QAVpCZ2l0aHViLmNvbS9zZWt0b3ItYWkvbWF0ZXJpYWwtcmV2aWV3LXN0YXJ0ZXIvZ28vZ2VuL2F1dGgvdjE7YXV0aHYxogIDQVhYqgIHQXV0aC5WMcoCB0F1dGhcVjHiAhNBdXRoXFYxXEdQQk1ldGFkYXRh6gIIQXV0aDo6VjFiBnByb3RvMw");
+  fileDesc("ChJhdXRoL3YxL2F1dGgucHJvdG8SB2F1dGgudjEiUAoEVXNlchIKCgJpZBgBIAEoCRIMCgRuYW1lGAIgASgJEg0KBWVtYWlsGAMgASgJEh8KBGtpbmQYBCABKA4yES5hdXRoLnYxLlVzZXJLaW5kIjAKDVNpZ25JblJlcXVlc3QSDQoFZW1haWwYASABKAkSEAoIcGFzc3dvcmQYAiABKAkiLQoOU2lnbkluUmVzcG9uc2USGwoEdXNlchgBIAEoCzINLmF1dGgudjEuVXNlciIQCg5TaWduT3V0UmVxdWVzdCIRCg9TaWduT3V0UmVzcG9uc2UiDgoMR2V0TWVSZXF1ZXN0IiwKDUdldE1lUmVzcG9uc2USGwoEdXNlchgBIAEoCzINLmF1dGgudjEuVXNlcipPCghVc2VyS2luZBIZChVVU0VSX0tJTkRfVU5TUEVDSUZJRUQQABITCg9VU0VSX0tJTkRfSFVNQU4QARITCg9VU0VSX0tJTkRfQUdFTlQQAjLEAQoLQXV0aFNlcnZpY2USOwoGU2lnbkluEhYuYXV0aC52MS5TaWduSW5SZXF1ZXN0GhcuYXV0aC52MS5TaWduSW5SZXNwb25zZSIAEj4KB1NpZ25PdXQSFy5hdXRoLnYxLlNpZ25PdXRSZXF1ZXN0GhguYXV0aC52MS5TaWduT3V0UmVzcG9uc2UiABI4CgVHZXRNZRIVLmF1dGgudjEuR2V0TWVSZXF1ZXN0GhYuYXV0aC52MS5HZXRNZVJlc3BvbnNlIgBCmQEKC2NvbS5hdXRoLnYxQglBdXRoUHJvdG9QAVpCZ2l0aHViLmNvbS9zZWt0b3ItYWkvbWF0ZXJpYWwtcmV2aWV3LXN0YXJ0ZXIvZ28vZ2VuL2F1dGgvdjE7YXV0aHYxogIDQVhYqgIHQXV0aC5WMcoCB0F1dGhcVjHiAhNBdXRoXFYxXEdQQk1ldGFkYXRh6gIIQXV0aDo6VjFiBnByb3RvMw");
 
 /**
+ * User is embedded wherever an actor appears (issue authors, event actors,
+ * run starters), so clients never look users up separately.
+ *
  * @generated from message auth.v1.User
  */
 export type User = Message<"auth.v1.User"> & {
@@ -27,9 +30,16 @@ export type User = Message<"auth.v1.User"> & {
   name: string;
 
   /**
+   * Empty for the agent.
+   *
    * @generated from field: string email = 3;
    */
   email: string;
+
+  /**
+   * @generated from field: auth.v1.UserKind kind = 4;
+   */
+  kind: UserKind;
 };
 
 /**
@@ -133,6 +143,35 @@ export type GetMeResponse = Message<"auth.v1.GetMeResponse"> & {
  */
 export const GetMeResponseSchema: GenMessage<GetMeResponse> = /*@__PURE__*/
   messageDesc(file_auth_v1_auth, 6);
+
+/**
+ * @generated from enum auth.v1.UserKind
+ */
+export enum UserKind {
+  /**
+   * @generated from enum value: USER_KIND_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: USER_KIND_HUMAN = 1;
+   */
+  HUMAN = 1,
+
+  /**
+   * The review agent. There is one agent user, created by a migration with
+   * a fixed id; it cannot sign in.
+   *
+   * @generated from enum value: USER_KIND_AGENT = 2;
+   */
+  AGENT = 2,
+}
+
+/**
+ * Describes the enum auth.v1.UserKind.
+ */
+export const UserKindSchema: GenEnum<UserKind> = /*@__PURE__*/
+  enumDesc(file_auth_v1_auth, 0);
 
 /**
  * AuthService handles email/password sign-in. The session is carried in an

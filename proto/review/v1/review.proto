@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package review.v1;
+
+import "auth/v1/auth.proto";
+import "google/protobuf/timestamp.proto";
+
+// ReviewService starts and tracks agent reviews of a pack. StartReview only
+// queues a run. A worker claims it, drives the Managed Agents session, and
+// records each issue the agent reports as the agent user.
+service ReviewService {
+  // StartReview fails with FailedPrecondition if the pack is APPROVED or
+  // CANCELLED, already has a queued or running review, or has no READY
+  // documents.
+  rpc StartReview(StartReviewRequest) returns (StartReviewResponse) {}
+  rpc GetReviewRun(GetReviewRunRequest) returns (GetReviewRunResponse) {}
+  // ListReviewRuns returns a pack's runs, newest first.
+  rpc ListReviewRuns(ListReviewRunsRequest) returns (ListReviewRunsResponse) {}
+  // CancelReviewRun stops the agent session. Issues already recorded stay.
+  rpc CancelReviewRun(CancelReviewRunRequest) returns (CancelReviewRunResponse) {}
+}
+
+enum ReviewRunStatus {
+  REVIEW_RUN_STATUS_UNSPECIFIED = 0;
+  REVIEW_RUN_STATUS_QUEUED = 1;
+  REVIEW_RUN_STATUS_RUNNING = 2;
+  REVIEW_RUN_STATUS_SUCCEEDED = 3;
+  REVIEW_RUN_STATUS_FAILED = 4;
+  REVIEW_RUN_STATUS_CANCELLED = 5;
+}
+
+message ReviewRun {
+  string id = 1;
+  string pack_id = 2;
+  ReviewRunStatus status = 3;
+  auth.v1.User started_by = 4;
+  // When the run was queued.
+  google.protobuf.Timestamp created_at = 5;
+  // When a worker claimed it.
+  google.protobuf.Timestamp started_at = 6;
+  google.protobuf.Timestamp finished_at = 7;
+  // Managed Agents session id, for the transcript in the Claude Console.
+  string agent_session_id = 8;
+  // Latest short status from the agent, e.g. "Reading QCS 05-06 Table 6.4".
+  // Updated at most every few seconds.
+  string progress_note = 9;
+  int32 issues_created = 10;
+  // The agent's closing summary.
+  string summary = 11;
+  // Set when FAILED.
+  string error = 12;
+}
+
+message StartReviewRequest {
+  string pack_id = 1;
+  // Optional extra instructions appended to the agent's kickoff message.
+  string instructions = 2;
+}
+
+message StartReviewResponse {
+  ReviewRun run = 1;
+}
+
+message GetReviewRunRequest {
+  string id = 1;
+}
+
+message GetReviewRunResponse {
+  ReviewRun run = 1;
+}
+
+message ListReviewRunsRequest {
+  string pack_id = 1;
+}
+
+message ListReviewRunsResponse {
+  repeated ReviewRun runs = 1;
+}
+
+message CancelReviewRunRequest {
+  string id = 1;
+}
+
+message CancelReviewRunResponse {
+  ReviewRun run = 1;
+}
