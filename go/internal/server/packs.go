@@ -23,11 +23,10 @@ const (
 )
 
 type PackHandler struct {
-	packs  *service.Packs
-	docs   *service.Documents
-	issues *service.Issues
-	hub    *service.Hub
-	st     *store.Store
+	packs *service.Packs
+	docs  *service.Documents
+	hub   *service.Hub
+	st    *store.Store
 }
 
 var _ packv1connect.PackServiceHandler = (*PackHandler)(nil)

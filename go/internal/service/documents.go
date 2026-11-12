@@ -73,7 +73,7 @@ func (d *Documents) Upload(ctx context.Context, actor store.User, in UploadInput
 	id := uuid.NewString()
 	key := fmt.Sprintf("packs/%s/documents/%s", in.PackID, id)
 	if err := d.files.Upload(ctx, key, in.Content, mimeType); err != nil {
-		return store.Document{}, err
+		return store.Document{}, fmt.Errorf("storing original %s: %w", key, err)
 	}
 
 	sum := sha256.Sum256(in.Content)
@@ -136,7 +136,7 @@ func (d *Documents) Original(ctx context.Context, id string) (store.Document, []
 	}
 	body, _, err := d.files.Get(ctx, doc.StorageKey)
 	if err != nil {
-		return store.Document{}, nil, err
+		return store.Document{}, nil, fmt.Errorf("reading original %s: %w", doc.StorageKey, err)
 	}
 	return doc, body, nil
 }

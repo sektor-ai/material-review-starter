@@ -150,10 +150,10 @@ func TestSignInComparesEvenForUnknownEmail(t *testing.T) {
 		t.Fatal(err)
 	}
 	compares := 0
-	real := a.compare
+	orig := a.compare
 	a.compare = func(hash, password []byte) error {
 		compares++
-		return real(hash, password)
+		return orig(hash, password)
 	}
 
 	for _, tc := range []struct{ email, password string }{

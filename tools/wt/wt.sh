@@ -1422,9 +1422,6 @@ cmd_merge() {
 	log "merged and cleaned up ${slug} (PR #${number})"
 }
 
-# hook_is_ours reports whether the named installed hook is our symlink. It compares by inode (-ef)
-# rather than by the symlink's text, so it still recognises the hook when reached via a different but
-# equivalent path (a symlinked home or volume).
 # hooks_dir prints the directory git actually runs hooks from: core.hooksPath when set, else the
 # common .git/hooks every worktree shares. The installed hooks resolve their location the same way
 # (`git rev-parse --git-path hooks`), so install and runtime agree. It dies when that directory is
@@ -1441,6 +1438,9 @@ hooks_dir() {
 	esac
 }
 
+# hook_is_ours reports whether the named installed hook is our symlink. It compares by inode (-ef)
+# rather than by the symlink's text, so it still recognises the hook when reached via a different but
+# equivalent path (a symlinked home or volume).
 hook_is_ours() {
 	local name=$1 dir hook
 	dir=$(hooks_dir 2>/dev/null) || return 1
