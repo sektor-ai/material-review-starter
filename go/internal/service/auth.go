@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -30,12 +32,30 @@ type UserStore interface {
 }
 
 type Auth struct {
-	store UserStore
-	now   func() time.Time
+	store   UserStore
+	now     func() time.Time
+	compare func(hash, password []byte) error
 }
 
 func NewAuth(s UserStore) *Auth {
-	return &Auth{store: s, now: time.Now}
+	return &Auth{store: s, now: time.Now, compare: bcrypt.CompareHashAndPassword}
+}
+
+// dummyHash is compared against when the email has no account, so a failed
+// sign-in costs one bcrypt comparison either way and its timing does not
+// reveal which emails are registered. Generated once, on first use.
+var dummyHash = sync.OnceValue(func() []byte {
+	hash, err := bcrypt.GenerateFromPassword([]byte("no account has this password"), bcrypt.DefaultCost)
+	if err != nil {
+		panic(fmt.Sprintf("generating dummy bcrypt hash: %v", err))
+	}
+	return hash
+})
+
+// normalizeEmail is the one form an email is stored and looked up in. The
+// database enforces it too (migration 0003).
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
 }
 
 // CreateUser hashes the password and stores a new user.
@@ -44,20 +64,21 @@ func (a *Auth) CreateUser(ctx context.Context, name, email, password string) (st
 	if err != nil {
 		return store.User{}, fmt.Errorf("hashing password: %w", err)
 	}
-	return a.store.CreateUser(ctx, name, email, string(hash))
+	return a.store.CreateUser(ctx, name, normalizeEmail(email), string(hash))
 }
 
 // SignIn checks credentials and starts a session. It returns the session
 // token to put in the cookie and its expiry.
 func (a *Auth) SignIn(ctx context.Context, email, password string) (store.User, string, time.Time, error) {
-	user, err := a.store.UserByEmail(ctx, email)
+	user, err := a.store.UserByEmail(ctx, normalizeEmail(email))
 	if errors.Is(err, store.ErrNotFound) {
+		_ = a.compare(dummyHash(), []byte(password))
 		return store.User{}, "", time.Time{}, ErrInvalidCredentials
 	}
 	if err != nil {
 		return store.User{}, "", time.Time{}, err
 	}
-	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
+	if a.compare([]byte(user.PasswordHash), []byte(password)) != nil {
 		return store.User{}, "", time.Time{}, ErrInvalidCredentials
 	}
 

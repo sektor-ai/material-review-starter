@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { authClient, isUnauthenticated } from "./api.ts";
+import { clients, isUnauthenticated } from "./api.ts";
 
-const meKey = ["me"] as const;
+export const meKey = ["me"] as const;
 
 // useMe returns the signed-in user, or null when signed out.
 export function useMe() {
@@ -9,7 +9,7 @@ export function useMe() {
     queryKey: meKey,
     queryFn: async () => {
       try {
-        const { user } = await authClient.getMe({});
+        const { user } = await clients().auth.getMe({});
         return user ?? null;
       } catch (error) {
         if (isUnauthenticated(error)) return null;
@@ -23,7 +23,7 @@ export function useMe() {
 export function useSignIn() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { email: string; password: string }) => authClient.signIn(input),
+    mutationFn: (input: { email: string; password: string }) => clients().auth.signIn(input),
     onSuccess: ({ user }) => queryClient.setQueryData(meKey, user ?? null),
   });
 }
@@ -31,7 +31,11 @@ export function useSignIn() {
 export function useSignOut() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => authClient.signOut({}),
-    onSuccess: () => queryClient.setQueryData(meKey, null),
+    mutationFn: () => clients().auth.signOut({}),
+    onSuccess: () => {
+      // Drop everything cached under the previous user.
+      queryClient.clear();
+      queryClient.setQueryData(meKey, null);
+    },
   });
 }

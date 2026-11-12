@@ -11,10 +11,22 @@ service AuthService {
   rpc GetMe(GetMeRequest) returns (GetMeResponse) {}
 }
 
+enum UserKind {
+  USER_KIND_UNSPECIFIED = 0;
+  USER_KIND_HUMAN = 1;
+  // The review agent. There is one agent user, created by a migration with
+  // a fixed id; it cannot sign in.
+  USER_KIND_AGENT = 2;
+}
+
+// User is embedded wherever an actor appears (issue authors, event actors,
+// run starters), so clients never look users up separately.
 message User {
   string id = 1;
   string name = 2;
+  // Empty for the agent.
   string email = 3;
+  UserKind kind = 4;
 }
 
 message SignInRequest {

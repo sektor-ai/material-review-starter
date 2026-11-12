@@ -21,11 +21,66 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type UserKind int32
+
+const (
+	UserKind_USER_KIND_UNSPECIFIED UserKind = 0
+	UserKind_USER_KIND_HUMAN       UserKind = 1
+	// The review agent. There is one agent user, created by a migration with
+	// a fixed id; it cannot sign in.
+	UserKind_USER_KIND_AGENT UserKind = 2
+)
+
+// Enum value maps for UserKind.
+var (
+	UserKind_name = map[int32]string{
+		0: "USER_KIND_UNSPECIFIED",
+		1: "USER_KIND_HUMAN",
+		2: "USER_KIND_AGENT",
+	}
+	UserKind_value = map[string]int32{
+		"USER_KIND_UNSPECIFIED": 0,
+		"USER_KIND_HUMAN":       1,
+		"USER_KIND_AGENT":       2,
+	}
+)
+
+func (x UserKind) Enum() *UserKind {
+	p := new(UserKind)
+	*p = x
+	return p
+}
+
+func (x UserKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (UserKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_auth_v1_auth_proto_enumTypes[0].Descriptor()
+}
+
+func (UserKind) Type() protoreflect.EnumType {
+	return &file_auth_v1_auth_proto_enumTypes[0]
+}
+
+func (x UserKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use UserKind.Descriptor instead.
+func (UserKind) EnumDescriptor() ([]byte, []int) {
+	return file_auth_v1_auth_proto_rawDescGZIP(), []int{0}
+}
+
+// User is embedded wherever an actor appears (issue authors, event actors,
+// run starters), so clients never look users up separately.
 type User struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Email         string                 `protobuf:"bytes,3,opt,name=email,proto3" json:"email,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name  string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// Empty for the agent.
+	Email         string   `protobuf:"bytes,3,opt,name=email,proto3" json:"email,omitempty"`
+	Kind          UserKind `protobuf:"varint,4,opt,name=kind,proto3,enum=auth.v1.UserKind" json:"kind,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -79,6 +134,13 @@ func (x *User) GetEmail() string {
 		return x.Email
 	}
 	return ""
+}
+
+func (x *User) GetKind() UserKind {
+	if x != nil {
+		return x.Kind
+	}
+	return UserKind_USER_KIND_UNSPECIFIED
 }
 
 type SignInRequest struct {
@@ -333,11 +395,12 @@ var File_auth_v1_auth_proto protoreflect.FileDescriptor
 
 const file_auth_v1_auth_proto_rawDesc = "" +
 	"\n" +
-	"\x12auth/v1/auth.proto\x12\aauth.v1\"@\n" +
+	"\x12auth/v1/auth.proto\x12\aauth.v1\"g\n" +
 	"\x04User\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x14\n" +
-	"\x05email\x18\x03 \x01(\tR\x05email\"A\n" +
+	"\x05email\x18\x03 \x01(\tR\x05email\x12%\n" +
+	"\x04kind\x18\x04 \x01(\x0e2\x11.auth.v1.UserKindR\x04kind\"A\n" +
 	"\rSignInRequest\x12\x14\n" +
 	"\x05email\x18\x01 \x01(\tR\x05email\x12\x1a\n" +
 	"\bpassword\x18\x02 \x01(\tR\bpassword\"3\n" +
@@ -347,7 +410,11 @@ const file_auth_v1_auth_proto_rawDesc = "" +
 	"\x0fSignOutResponse\"\x0e\n" +
 	"\fGetMeRequest\"2\n" +
 	"\rGetMeResponse\x12!\n" +
-	"\x04user\x18\x01 \x01(\v2\r.auth.v1.UserR\x04user2\xc4\x01\n" +
+	"\x04user\x18\x01 \x01(\v2\r.auth.v1.UserR\x04user*O\n" +
+	"\bUserKind\x12\x19\n" +
+	"\x15USER_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
+	"\x0fUSER_KIND_HUMAN\x10\x01\x12\x13\n" +
+	"\x0fUSER_KIND_AGENT\x10\x022\xc4\x01\n" +
 	"\vAuthService\x12;\n" +
 	"\x06SignIn\x12\x16.auth.v1.SignInRequest\x1a\x17.auth.v1.SignInResponse\"\x00\x12>\n" +
 	"\aSignOut\x12\x17.auth.v1.SignOutRequest\x1a\x18.auth.v1.SignOutResponse\"\x00\x128\n" +
@@ -366,30 +433,33 @@ func file_auth_v1_auth_proto_rawDescGZIP() []byte {
 	return file_auth_v1_auth_proto_rawDescData
 }
 
+var file_auth_v1_auth_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_auth_v1_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_auth_v1_auth_proto_goTypes = []any{
-	(*User)(nil),            // 0: auth.v1.User
-	(*SignInRequest)(nil),   // 1: auth.v1.SignInRequest
-	(*SignInResponse)(nil),  // 2: auth.v1.SignInResponse
-	(*SignOutRequest)(nil),  // 3: auth.v1.SignOutRequest
-	(*SignOutResponse)(nil), // 4: auth.v1.SignOutResponse
-	(*GetMeRequest)(nil),    // 5: auth.v1.GetMeRequest
-	(*GetMeResponse)(nil),   // 6: auth.v1.GetMeResponse
+	(UserKind)(0),           // 0: auth.v1.UserKind
+	(*User)(nil),            // 1: auth.v1.User
+	(*SignInRequest)(nil),   // 2: auth.v1.SignInRequest
+	(*SignInResponse)(nil),  // 3: auth.v1.SignInResponse
+	(*SignOutRequest)(nil),  // 4: auth.v1.SignOutRequest
+	(*SignOutResponse)(nil), // 5: auth.v1.SignOutResponse
+	(*GetMeRequest)(nil),    // 6: auth.v1.GetMeRequest
+	(*GetMeResponse)(nil),   // 7: auth.v1.GetMeResponse
 }
 var file_auth_v1_auth_proto_depIdxs = []int32{
-	0, // 0: auth.v1.SignInResponse.user:type_name -> auth.v1.User
-	0, // 1: auth.v1.GetMeResponse.user:type_name -> auth.v1.User
-	1, // 2: auth.v1.AuthService.SignIn:input_type -> auth.v1.SignInRequest
-	3, // 3: auth.v1.AuthService.SignOut:input_type -> auth.v1.SignOutRequest
-	5, // 4: auth.v1.AuthService.GetMe:input_type -> auth.v1.GetMeRequest
-	2, // 5: auth.v1.AuthService.SignIn:output_type -> auth.v1.SignInResponse
-	4, // 6: auth.v1.AuthService.SignOut:output_type -> auth.v1.SignOutResponse
-	6, // 7: auth.v1.AuthService.GetMe:output_type -> auth.v1.GetMeResponse
-	5, // [5:8] is the sub-list for method output_type
-	2, // [2:5] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	0, // 0: auth.v1.User.kind:type_name -> auth.v1.UserKind
+	1, // 1: auth.v1.SignInResponse.user:type_name -> auth.v1.User
+	1, // 2: auth.v1.GetMeResponse.user:type_name -> auth.v1.User
+	2, // 3: auth.v1.AuthService.SignIn:input_type -> auth.v1.SignInRequest
+	4, // 4: auth.v1.AuthService.SignOut:input_type -> auth.v1.SignOutRequest
+	6, // 5: auth.v1.AuthService.GetMe:input_type -> auth.v1.GetMeRequest
+	3, // 6: auth.v1.AuthService.SignIn:output_type -> auth.v1.SignInResponse
+	5, // 7: auth.v1.AuthService.SignOut:output_type -> auth.v1.SignOutResponse
+	7, // 8: auth.v1.AuthService.GetMe:output_type -> auth.v1.GetMeResponse
+	6, // [6:9] is the sub-list for method output_type
+	3, // [3:6] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_auth_v1_auth_proto_init() }
@@ -402,13 +472,14 @@ func file_auth_v1_auth_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_auth_v1_auth_proto_rawDesc), len(file_auth_v1_auth_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_auth_v1_auth_proto_goTypes,
 		DependencyIndexes: file_auth_v1_auth_proto_depIdxs,
+		EnumInfos:         file_auth_v1_auth_proto_enumTypes,
 		MessageInfos:      file_auth_v1_auth_proto_msgTypes,
 	}.Build()
 	File_auth_v1_auth_proto = out.File

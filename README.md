@@ -156,4 +156,20 @@ terraform -chdir=terraform/envs/dev init -backend-config="bucket=<your-state-buc
 make tf-plan ENV=dev
 ```
 
-Add secret values with `gcloud secrets versions add mr-dev-anthropic-api-key --data-file=-` (and the same for the others). The documents bucket is reached through GCS's S3 interoperability API, so the S3 secrets hold an HMAC key for the API's service account. Run migrations with the `/migrate` binary in the API image (for example as a Cloud Run job).
+Add secret values with `gcloud secrets versions add mr-dev-anthropic-api-key --data-file=-` (and the same for the others). The documents bucket is reached through GCS's S3 interoperability API, so the S3 secrets hold an HMAC key for the API's service account.
+
+### Deploying a new image
+
+Migrations run as a Cloud Run job (`mr-<env>-migrate`) from the same image, before the service moves to it:
+
+```bash
+# 1. build and push the image as $TAG (CI passes the git SHA)
+# 2. point only the migrate job at the new image
+terraform -chdir=terraform/envs/dev apply -var api_image_tag=$TAG -target=module.api.google_cloud_run_v2_job.migrate
+# 3. run it and wait
+make cloud-migrate ENV=dev
+# 4. roll the service
+terraform -chdir=terraform/envs/dev apply -var api_image_tag=$TAG
+```
+
+`/healthz` fails while the database is behind the build's migrations, and it is the service's startup probe, so a revision rolled out before step 3 never takes traffic: the previous revision keeps serving. Migrations must stay compatible with the revision that is still serving while they run.

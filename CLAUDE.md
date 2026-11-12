@@ -62,8 +62,9 @@ Before finishing a change, run `make lint test`. If proto/ changed, run `make ge
 Every task that changes repository files starts in an isolated `wt` environment by default — create
 it BEFORE creating or editing any file, without being asked. The primary checkout is where the human's
 IDE and dev server live; keep it clean. Exceptions only: the human opts out; the task is read-only
-(investigation, Q&A, review); or it touches no repository files. "It's small" or "it's just docs" are
-not exceptions. When unsure, create the worktree.
+(investigation, Q&A, review); it touches no repository files; or `wt` itself is broken so that it
+cannot create a worktree, in which case fixing `tools/wt` in the primary is allowed (say so). "It's
+small" or "it's just docs" are not exceptions. When unsure, create the worktree.
 
 1. `tools/wt/wt.sh create <slug> --type <type>` — kebab-case slug; branch `<type>/<slug>`
    (`type` ∈ feature|bugfix|refactor|docs|chore|test|perf, default feature). Use `tools/wt/wt.sh`, not
@@ -137,6 +138,9 @@ Email/password with bcrypt. Sessions are random tokens in an HttpOnly `session` 
 - Import API types and service descriptors from `@app/api` only.
 - Server state goes through TanStack Query hooks wrapping the Connect client (see `src/session.ts`). Components don't call the client directly.
 - Tests: vitest next to the component.
+- Dev mock: `src/mock/` serves every Connect service from an in-browser store, for UI work ahead of the
+  backend. Turn it on with `?mock=1` (off with `?mock=0`; remembered per browser) or `VITE_MOCK_API=1`;
+  `&as=bob` signs that tab in as Bob, and tabs share state live. Dev only, never in a production build.
 
 ## Terraform (terraform/)
 

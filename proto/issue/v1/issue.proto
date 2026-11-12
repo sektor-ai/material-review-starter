@@ -1,0 +1,196 @@
+syntax = "proto3";
+
+package issue.v1;
+
+import "auth/v1/auth.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+// IssueService manages the shared issue table. Every write appends an
+// IssueEvent in the same transaction, attributed to the session user; the
+// event log is the record of who changed what.
+//
+// Writes to a pack whose status is APPROVED or CANCELLED fail with
+// FailedPrecondition.
+service IssueService {
+  // ListIssues returns all issues of a pack, plus the event cursor read in
+  // the same snapshot. Pass the cursor to PackService.WatchPack to receive
+  // every change after it.
+  rpc ListIssues(ListIssuesRequest) returns (ListIssuesResponse) {}
+  rpc GetIssue(GetIssueRequest) returns (GetIssueResponse) {}
+  // CreateIssue lets an engineer add an issue by hand.
+  rpc CreateIssue(CreateIssueRequest) returns (CreateIssueResponse) {}
+  // UpdateIssue applies the fields that are set. It fails with Aborted when
+  // expected_version is not the current version; the error carries the
+  // current Issue as a detail. An update that changes nothing writes no
+  // event and returns the issue as it is.
+  rpc UpdateIssue(UpdateIssueRequest) returns (UpdateIssueResponse) {}
+  // ListIssueEvents returns one issue's full history, oldest first.
+  rpc ListIssueEvents(ListIssueEventsRequest) returns (ListIssueEventsResponse) {}
+}
+
+enum IssueStatus {
+  ISSUE_STATUS_UNSPECIFIED = 0;
+  ISSUE_STATUS_OPEN = 1;
+  ISSUE_STATUS_CLOSED = 2;
+}
+
+enum IssueSeverity {
+  ISSUE_SEVERITY_UNSPECIFIED = 0;
+  // Safety, structural or fire and life safety. Blocks approval.
+  ISSUE_SEVERITY_CRITICAL = 1;
+  // Non-compliance that must be fixed before approval.
+  ISSUE_SEVERITY_MAJOR = 2;
+  // Missing information, documentation or clarification.
+  ISSUE_SEVERITY_MINOR = 3;
+}
+
+// SpecReference is the QCS 2014 clause an issue breaks. Fields are strings
+// because clauses come in forms like "Table 6.4" or "5.3.2(b)".
+message SpecReference {
+  // "05"
+  string section = 1;
+  // "06"
+  string part = 2;
+  // "Table 6.4"
+  string clause = 3;
+  // Optional, e.g. "Maximum free water/cementitious ratio".
+  string clause_title = 4;
+  // Page in the single-file QCS 2014 PDF, when known.
+  optional int32 pdf_page = 5;
+}
+
+message Issue {
+  string id = 1;
+  string pack_id = 2;
+  string document_id = 3;
+  // Starts at 1 and increases by one with every change.
+  int32 version = 4;
+
+  IssueStatus status = 5;
+  IssueSeverity severity = 6;
+  string title = 7;
+  string description = 8;
+  SpecReference spec_ref = 9;
+  // Quote or value from the submittal that shows the problem, e.g.
+  // "Free water/cementitious ratio: 0.55".
+  string evidence = 10;
+  // Extras the agent attaches (confidence, notes). Not editable.
+  google.protobuf.Struct metadata = 11;
+
+  // Output only. Derived from the issue's events: created_* from version 1,
+  // updated_* from the current version.
+  auth.v1.User created_by = 20;
+  google.protobuf.Timestamp created_at = 21;
+  auth.v1.User updated_by = 22;
+  google.protobuf.Timestamp updated_at = 23;
+  // Output only. The review run that created the issue; unset if it was
+  // added by hand.
+  optional string run_id = 24;
+}
+
+enum IssueEventKind {
+  ISSUE_EVENT_KIND_UNSPECIFIED = 0;
+  ISSUE_EVENT_KIND_CREATED = 1;
+  ISSUE_EVENT_KIND_UPDATED = 2;
+}
+
+// FieldChange is one field's change. Values are JSON: enums as their names
+// ("ISSUE_STATUS_CLOSED"), spec_ref as an object. old_value is null on
+// CREATED events.
+message FieldChange {
+  // Proto field name, e.g. "status".
+  string field = 1;
+  google.protobuf.Value old_value = 2;
+  google.protobuf.Value new_value = 3;
+}
+
+message IssueEvent {
+  // Increases with every event; within one pack, seq order is commit order.
+  int64 seq = 1;
+  string issue_id = 2;
+  string pack_id = 3;
+  // The issue version this event produced.
+  int32 version = 4;
+  IssueEventKind kind = 5;
+  auth.v1.User actor = 6;
+  // Set when the actor is the agent.
+  optional string run_id = 7;
+  // Optional reason given with the change, e.g. why an issue was closed.
+  string note = 8;
+  // For CREATED, every initial value.
+  repeated FieldChange changes = 9;
+  google.protobuf.Timestamp created_at = 10;
+}
+
+// IssueChanged is streamed by PackService.WatchPack.
+message IssueChanged {
+  IssueEvent event = 1;
+  // The issue's current state when sent, which may be newer than the event
+  // during a replay. Clients upsert by id and ignore it when they already
+  // hold the same or a higher version, so a replay after reconnecting is
+  // harmless.
+  Issue issue = 2;
+}
+
+message ListIssuesRequest {
+  string pack_id = 1;
+}
+
+message ListIssuesResponse {
+  repeated Issue issues = 1;
+  int64 cursor_seq = 2;
+}
+
+message GetIssueRequest {
+  string id = 1;
+}
+
+message GetIssueResponse {
+  Issue issue = 1;
+}
+
+message CreateIssueRequest {
+  // The pack is taken from the document.
+  string document_id = 1;
+  IssueSeverity severity = 2;
+  string title = 3;
+  string description = 4;
+  SpecReference spec_ref = 5;
+  string evidence = 6;
+  // Recorded on the CREATED event.
+  string note = 7;
+}
+
+message CreateIssueResponse {
+  Issue issue = 1;
+  IssueEvent event = 2;
+}
+
+message UpdateIssueRequest {
+  string id = 1;
+  int32 expected_version = 2;
+  optional IssueStatus status = 3;
+  optional IssueSeverity severity = 4;
+  optional string title = 5;
+  optional string description = 6;
+  // Replaced as a whole when set.
+  SpecReference spec_ref = 7;
+  optional string evidence = 8;
+  // Recorded on the event, not on the issue.
+  string note = 9;
+}
+
+message UpdateIssueResponse {
+  Issue issue = 1;
+  // Unset when the update changed nothing.
+  IssueEvent event = 2;
+}
+
+message ListIssueEventsRequest {
+  string issue_id = 1;
+}
+
+message ListIssueEventsResponse {
+  repeated IssueEvent events = 1;
+}

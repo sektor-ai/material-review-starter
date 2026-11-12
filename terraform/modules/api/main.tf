@@ -70,3 +70,53 @@ resource "google_cloud_run_v2_service" "api" {
 
   depends_on = [google_secret_manager_secret_iam_member.api]
 }
+
+# Runs cmd/migrate from the same image, with the same identity and settings as the service. Deploys run
+# it (make cloud-migrate) before rolling the service onto a new image; until they do, the new
+# revision's /healthz reports the schema as behind and its startup probe keeps it from taking traffic.
+# Migrations must stay compatible with the revision still serving while they run.
+resource "google_cloud_run_v2_job" "migrate" {
+  project  = var.project_id
+  name     = "${var.name}-migrate"
+  location = var.region
+  labels   = var.labels
+
+  template {
+    labels     = var.labels
+    task_count = 1
+
+    template {
+      service_account = google_service_account.api.email
+      max_retries     = 0
+      timeout         = "600s"
+
+      containers {
+        image   = var.image
+        command = ["/migrate"]
+
+        dynamic "env" {
+          for_each = var.env
+          content {
+            name  = env.key
+            value = env.value
+          }
+        }
+
+        dynamic "env" {
+          for_each = var.secret_env
+          content {
+            name = env.key
+            value_source {
+              secret_key_ref {
+                secret  = env.value
+                version = "latest"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [google_secret_manager_secret_iam_member.api]
+}

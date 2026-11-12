@@ -1,6 +1,7 @@
 # Single entry point for the monorepo. Run from the repo root.
 .DEFAULT_GOAL := help
 ENV ?= dev
+REGION ?= europe-west1
 
 .PHONY: help
 help: ## List targets
@@ -71,6 +72,10 @@ test-wt: ## Run the wt tool's own test suites (slow; not part of make test)
 	./tools/wt/test_render.sh
 	./tools/wt/test_env_args.sh
 	./tools/wt/test_promote.sh
+
+.PHONY: cloud-migrate
+cloud-migrate: ## Run the Cloud Run migrate job for ENV and wait for it (before rolling the service)
+	gcloud run jobs execute mr-$(ENV)-migrate --region $(REGION) --wait
 
 .PHONY: tf-plan
 tf-plan: ## terraform plan for ENV (default dev). Never apply from here.

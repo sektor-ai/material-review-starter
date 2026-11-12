@@ -121,3 +121,51 @@ func TestAuth(t *testing.T) {
 		}
 	})
 }
+
+func TestEmailIsCaseInsensitive(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeStore(time.Now)
+	a := NewAuth(fs)
+
+	u, err := a.CreateUser(ctx, "Alice", "  Alice@Example.COM ", "password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Email != "alice@example.com" {
+		t.Fatalf("stored email = %q, want it normalised to lower case", u.Email)
+	}
+	for _, typed := range []string{"alice@example.com", "ALICE@EXAMPLE.COM", " Alice@Example.com "} {
+		if _, _, _, err := a.SignIn(ctx, typed, "password123"); err != nil {
+			t.Errorf("SignIn(%q) = %v, want success", typed, err)
+		}
+	}
+}
+
+// A sign-in for an unknown email must cost the same bcrypt comparison as a
+// wrong password, so response time does not reveal which emails exist.
+func TestSignInComparesEvenForUnknownEmail(t *testing.T) {
+	ctx := context.Background()
+	a := NewAuth(newFakeStore(time.Now))
+	if _, err := a.CreateUser(ctx, "Alice", "alice@example.com", "password123"); err != nil {
+		t.Fatal(err)
+	}
+	compares := 0
+	real := a.compare
+	a.compare = func(hash, password []byte) error {
+		compares++
+		return real(hash, password)
+	}
+
+	for _, tc := range []struct{ email, password string }{
+		{"nobody@example.com", "password123"},
+		{"alice@example.com", "wrong"},
+	} {
+		compares = 0
+		if _, _, _, err := a.SignIn(ctx, tc.email, tc.password); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("SignIn(%q) error = %v, want ErrInvalidCredentials", tc.email, err)
+		}
+		if compares != 1 {
+			t.Errorf("SignIn(%q) made %d bcrypt comparisons, want 1", tc.email, compares)
+		}
+	}
+}

@@ -35,7 +35,7 @@ import (
 )
 
 // Must match SLUG_PATTERN in tools/wt/lib/common.sh.
-var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,38}$`)
+var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$`)
 
 func main() {
 	if err := run(context.Background(), os.Args[1:]); err != nil {
