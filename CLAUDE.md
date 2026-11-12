@@ -126,6 +126,8 @@ Email/password with bcrypt. Sessions are random tokens in an HttpOnly `session` 
 - Go SDK: `github.com/anthropics/anthropic-sdk-go/v2`, used only in `internal/llm`.
 - The agent runs on Claude Managed Agents (`client.Beta.Agents/Environments/Sessions`). Agents are persistent: create them in `cmd/agent-setup`, never in the request path; the API uses `AGENT_ID` / `ENVIRONMENT_ID` from config.
 - Agent definition (name, model, system prompt, tools) lives in `llm.ReviewerAgent`. Change it there and re-run `make agent-setup`.
+  Run it from the primary checkout: the ids are shared by every checkout and live in the primary's
+  `.env` (it refuses under `ENV_FILE`); `wt recreate-config <slug>` passes them on to an environment.
 - Default model `claude-opus-5-5` (`llm.DefaultModel`, overridable with `ANTHROPIC_MODEL`). Don't hardcode model IDs elsewhere or add date suffixes.
 - For direct Messages API calls: use adaptive thinking and `output_config.effort` (`budget_tokens` and disabled thinking are rejected on current models); stream long requests; check `stop_reason` (`max_tokens`, `tool_use`, `refusal`) before reading content; keep system prompt and tools stable and first for prompt caching; handle SDK errors by type, not by message text.
 - Don't guess SDK names. Check the SDK source or docs, and let the compiler confirm.

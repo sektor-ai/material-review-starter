@@ -92,3 +92,68 @@ func TestWriteEnvValuesRewritesExportAndSpacedLines(t *testing.T) {
 		t.Errorf("file = %q, want %q", got, want)
 	}
 }
+
+// The search for .env stops at the repository root: a .env above it (say
+// ~/.env) is someone else's settings.
+func TestFindEnvFileStopsAtRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("X=outside\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(root, "repo")
+	for _, tc := range []struct {
+		name    string
+		gitFile bool // a worktree has a .git file rather than a directory
+	}{{"checkout", false}, {"worktree", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.RemoveAll(repo); err != nil {
+				t.Fatal(err)
+			}
+			sub := filepath.Join(repo, "go", "cmd")
+			if err := os.MkdirAll(sub, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.gitFile {
+				err := os.WriteFile(filepath.Join(repo, ".git"), []byte("gitdir: elsewhere\n"), 0o600)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(sub)
+			t.Setenv("ENV_FILE", "")
+
+			if path, ok := FindEnvFile(); ok {
+				t.Fatalf("FindEnvFile found %s above the repository root", path)
+			}
+
+			inside := filepath.Join(repo, ".env")
+			if err := os.WriteFile(inside, []byte("X=inside\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			path, ok := FindEnvFile()
+			if !ok || filepath.Base(filepath.Dir(path)) != "repo" {
+				t.Fatalf("FindEnvFile = %q, %v; want the repository's own .env", path, ok)
+			}
+		})
+	}
+}
+
+// agent-setup only talks to Anthropic, so loading its config must not demand
+// DATABASE_URL or S3 settings.
+func TestLoadAgentNeedsOnlyAgentSettings(t *testing.T) {
+	path := writeFile(t, "AGENT_ID=agent_1\nENVIRONMENT_ID=env_1\n")
+	t.Setenv("ENV_FILE", path)
+	for _, name := range []string{"DATABASE_URL", "S3_ENDPOINT", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"} {
+		t.Setenv(name, "")
+		os.Unsetenv(name)
+	}
+	got, err := LoadAgent()
+	if err != nil {
+		t.Fatalf("LoadAgent with no database or storage settings: %v", err)
+	}
+	if got != (Agent{AgentID: "agent_1", EnvironmentID: "env_1"}) {
+		t.Fatalf("LoadAgent = %+v", got)
+	}
+}
