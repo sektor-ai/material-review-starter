@@ -19,7 +19,7 @@ import {
 
 const issue = (id: string, version: number, title = `${id} v${version}`) =>
   create(IssueSchema, { id, version, title, packId: "p" });
-const event = (seq: bigint) => create(IssueEventSchema, { seq, issueId: "a" });
+const event = (seq: bigint, version = Number(seq)) => create(IssueEventSchema, { seq, issueId: "a", version });
 const run = (id: string, createdMs: number) => create(ReviewRunSchema, { id, packId: "p", createdAt: timestampFromMs(createdMs) });
 
 describe("upsertIssue", () => {
@@ -59,6 +59,11 @@ describe("appendEvent", () => {
     events = appendEvent(events, event(1n));
     events = appendEvent(events, event(3n));
     expect(events.map((e) => e.seq)).toEqual([1n, 3n]);
+  });
+
+  it("keeps two events that share a seq but are different versions", () => {
+    const events = appendEvent(appendEvent([], event(7n, 2)), event(7n, 3));
+    expect(events.map((e) => e.version)).toEqual([2, 3]);
   });
 });
 

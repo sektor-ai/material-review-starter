@@ -14,34 +14,29 @@ const RECENT_MS = 6_000;
 const SILENCE_MS = 45_000;
 const MAX_BACKOFF_MS = 15_000;
 
-export type Applied = {
-  // The event seq the message carried, if any.
-  seq?: bigint;
-  // True when an issue in the cache changed; false for a replay of
-  // something the cache already held.
-  issueChanged: boolean;
-};
-
-// applyWatchUpdate writes one stream message into the query cache.
-export function applyWatchUpdate(qc: QueryClient, res: WatchPackResponse): Applied {
+// applyWatchUpdate writes one stream message into the query cache and
+// returns the event seq it carried, if any. Applying an issue event also
+// advances the cached cursor, so a stream opened later (e.g. on returning
+// to the page) starts after it.
+export function applyWatchUpdate(qc: QueryClient, res: WatchPackResponse): bigint | undefined {
   switch (res.update.case) {
     case "issueChanged": {
       const { issue, event } = res.update.value;
-      const issueChanged = issue ? writeIssue(qc, issue) : false;
+      if (issue) writeIssue(qc, issue);
       if (event) {
         writeIssueEvent(qc, event);
         advanceCursor(qc, event.packId, event.seq);
       }
-      return { seq: event?.seq, issueChanged };
+      return event?.seq;
     }
     case "runUpdated":
       writeRun(qc, res.update.value);
-      return { issueChanged: false };
+      return undefined;
     case "packUpdated":
       writePack(qc, res.update.value);
-      return { issueChanged: false };
+      return undefined;
     default:
-      return { issueChanged: false };
+      return undefined;
   }
 }
 
@@ -108,11 +103,14 @@ export function usePackWatch(packId: string, cursorSeq: bigint | undefined, meId
             watchdog = setTimeout(() => conn.abort(), SILENCE_MS);
             attempt = 0;
             setStatus("live");
-            const applied = applyWatchUpdate(qc, res);
-            if (applied.seq !== undefined && applied.seq > seq) seq = applied.seq;
-            // Only flag real news: a replay of what the cache already
-            // holds is not someone else's change.
-            if (applied.issueChanged) markRecent(res);
+            const eventSeq = applyWatchUpdate(qc, res);
+            // An event past the stream position is news, even if the issue
+            // already reached the cache another way (a conflict response, a
+            // refetch). Anything at or before it was seen already.
+            if (eventSeq !== undefined && eventSeq > seq) {
+              seq = eventSeq;
+              markRecent(res);
+            }
           }
         } catch {
           // Dropped, timed out, or the server went away: reconnect below.

@@ -3,9 +3,10 @@ import { create } from "@bufbuild/protobuf";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { IssueStatus, UpdateIssueRequestSchema, type Issue } from "@app/api";
+import { IssueSchema, IssueStatus, UpdateIssueRequestSchema, type Issue } from "@app/api";
 import { setTransport } from "../api.ts";
 import { App } from "../App.tsx";
+import { writeIssue } from "../queries/cache.ts";
 import { navigate } from "../router.tsx";
 import { createMockApi, type MockApi, type SessionStore } from "../mock/index.ts";
 import { mockUsers } from "../mock/seed.ts";
@@ -29,8 +30,10 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+let qc: QueryClient;
+
 function renderApp() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
       <App />
@@ -143,5 +146,25 @@ describe("PackPage", () => {
     await waitFor(() => expect(openIssue(W_C).version).toBe(before + 2));
     expect(openIssue(W_C).severity).toBe(3);
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("flags someone else's change even when it reached the cache before the stream", async () => {
+    renderApp();
+    await screen.findByText(W_C);
+    await screen.findByText("Live");
+    const before = openIssue(W_C);
+    // Bob's new version lands in the cache first, as a conflict response
+    // or a refetch would deliver it...
+    act(() => {
+      writeIssue(
+        qc,
+        create(IssueSchema, { ...before, version: before.version + 1, title: "Bob's title", updatedBy: mockUsers.bob }),
+      );
+    });
+    await screen.findByText("Bob's title");
+    // ...then his event arrives on the stream. It is still news.
+    bobUpdates(before, { title: "Bob's title" });
+    const row = (await screen.findByText("Bob's title")).closest("tr")!;
+    expect(await within(row).findByText("Updated by Bob Chen")).toBeTruthy();
   });
 });

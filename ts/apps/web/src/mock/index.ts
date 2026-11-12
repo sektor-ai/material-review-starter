@@ -62,6 +62,10 @@ export function createMockApi(options: MockApiOptions = {}): MockApi {
   // Lock for as long as it does. A run whose lock is free has no driver
   // (its tab was closed or reloaded) and would stay RUNNING forever, so it
   // is failed instead.
+  //
+  // Known gaps, accepted for a dev-only mock: a tab that loads between
+  // another tab committing a run and taking its lock can fail a live run,
+  // and tabs that were already open don't notice a run abandoned later.
   const locks = !isolated && typeof navigator !== "undefined" ? navigator.locks : undefined;
   const runLock = (runId: string) => `mockApi.run.${runId}`;
 

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DocumentStatus, type GetPackResponse } from "@app/api";
 import { clients } from "../api.ts";
@@ -26,9 +27,10 @@ export function usePack(id: string) {
   return useQuery({
     queryKey: keys.pack(id),
     queryFn: async () => mergePackResponse(qc.getQueryData(keys.pack(id)), await clients().pack.getPack({ id })),
-    // WatchPack keeps the pack and its run current, so there is nothing to
-    // gain from refetching on focus.
-    refetchOnWindowFocus: false,
+    // WatchPack does not stream documents, so refetch on focus to pick up
+    // other people's uploads. mergePackResponse keeps newer streamed pack
+    // and run state, so this can't roll them back.
+    refetchOnWindowFocus: true,
     // WatchPack does not report document parsing, so poll while any
     // document is still being processed.
     refetchInterval: (query) => (hasProcessingDocuments(query.state.data) ? 2_000 : false),
@@ -108,10 +110,21 @@ export function useUploadDocument(packId: string) {
   });
 }
 
+// useDocument loads a document's parsed content and fetches it again when
+// the document's status changes (e.g. PROCESSING to READY), keeping the
+// old content on screen meanwhile.
 export function useDocument(id: string | undefined, status: DocumentStatus) {
-  return useQuery({
-    queryKey: keys.document(id ?? "", status),
+  const qc = useQueryClient();
+  const query = useQuery({
+    queryKey: keys.document(id ?? ""),
     queryFn: () => clients().pack.getDocument({ id: id! }),
     enabled: id !== undefined,
   });
+  const seenStatus = useRef(status);
+  useEffect(() => {
+    if (id === undefined || seenStatus.current === status) return;
+    seenStatus.current = status;
+    void qc.invalidateQueries({ queryKey: keys.document(id) });
+  }, [id, status, qc]);
+  return query;
 }

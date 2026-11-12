@@ -10,9 +10,7 @@ import { toDate } from "../format.ts";
 export const keys = {
   packs: ["packs"] as const,
   pack: (id: string) => ["pack", id] as const,
-  // Keyed by status too, so the parsed text is fetched again once a
-  // document finishes processing.
-  document: (id: string, status: number) => ["document", id, status] as const,
+  document: (id: string) => ["document", id] as const,
   issues: (packId: string) => ["issues", packId] as const,
   issueEvents: (issueId: string) => ["issueEvents", issueId] as const,
   runs: (packId: string) => ["runs", packId] as const,
@@ -43,9 +41,10 @@ export function mergeIssues(cached: Issue[] | undefined, fetched: Issue[]): Issu
   return merged;
 }
 
-// appendEvent adds an event to an issue's history once, in seq order.
+// appendEvent adds an event to an issue's history once, in seq order. An
+// event is identified by the issue version it produced, not by its seq.
 export function appendEvent(events: IssueEvent[], event: IssueEvent): IssueEvent[] {
-  if (events.some((e) => e.seq === event.seq)) return events;
+  if (events.some((e) => e.issueId === event.issueId && e.version === event.version)) return events;
   return [...events, event].sort((a, b) => (a.seq < b.seq ? -1 : a.seq > b.seq ? 1 : 0));
 }
 
