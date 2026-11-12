@@ -17,7 +17,9 @@ export function DocumentsPanel({
   const upload = useUploadDocument(packId);
   const input = useRef<HTMLInputElement>(null);
   const [tooLarge, setTooLarge] = useState<string | null>(null);
-  const [viewing, setViewing] = useState<Document | null>(null);
+  const [viewingId, setViewingId] = useState<string | null>(null);
+  // Read from the live list, so the drawer follows the document's status.
+  const viewing = documents.find((d) => d.id === viewingId);
 
   function handleFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -52,7 +54,7 @@ export function DocumentsPanel({
           {documents.map((doc) => (
             <li key={doc.id}>
               <div>
-                <button type="button" className="link" onClick={() => setViewing(doc)}>
+                <button type="button" className="link" onClick={() => setViewingId(doc.id)}>
                   {doc.title || doc.filename}
                 </button>
                 <div className="muted small">
@@ -73,13 +75,13 @@ export function DocumentsPanel({
           ))}
         </ul>
       )}
-      {viewing && <DocumentDrawer document={viewing} onClose={() => setViewing(null)} />}
+      {viewing && <DocumentDrawer document={viewing} onClose={() => setViewingId(null)} />}
     </section>
   );
 }
 
 function DocumentDrawer({ document, onClose }: { document: Document; onClose: () => void }) {
-  const doc = useDocument(document.id);
+  const doc = useDocument(document.id, document.status);
   return (
     <Drawer title={document.title || document.filename} onClose={onClose}>
       {doc.isPending && <p className="muted">Loading…</p>}

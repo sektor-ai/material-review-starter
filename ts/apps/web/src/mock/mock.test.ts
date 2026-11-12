@@ -1,11 +1,14 @@
 import { createClient } from "@connectrpc/connect";
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
-import { IssueService, IssueStatus, PackService, PackStatus, ReviewRunStatus, ReviewService } from "@app/api";
+import { create } from "@bufbuild/protobuf";
+import { IssueService, IssueStatus, PackService, PackStatus, ReviewRunStatus, ReviewService, UpdateIssueRequestSchema } from "@app/api";
 import { conflictIssue } from "../api.ts";
 import { keys, type IssuesData } from "../queries/cache.ts";
 import { applyWatchUpdate } from "../queries/watch.ts";
 import { createMockApi, type SessionStore } from "./index.ts";
+import { mockUsers, seed } from "./seed.ts";
+import { MockStore, type Change } from "./store.ts";
 
 // These tests run the mock through a real Connect transport, so they also
 // check that the client code handles the contract as the proto describes it.
@@ -137,5 +140,44 @@ describe("mock API", () => {
     await expect(
       c.issue.updateIssue({ id: issues[0].id, expectedVersion: 99, status: IssueStatus.OPEN }),
     ).rejects.toThrow(/approved/);
+  });
+
+  it("rejects approval while a review is in progress, as the backend does", async () => {
+    const c = setup();
+    const pack = await s001(c);
+    const { issues } = await c.issue.listIssues({ packId: pack.id });
+    for (const i of issues.filter((i) => i.status === IssueStatus.OPEN)) {
+      await c.issue.updateIssue({ id: i.id, expectedVersion: i.version, status: IssueStatus.CLOSED });
+    }
+    await c.review.startReview({ packId: pack.id });
+    await expect(c.pack.approvePack({ id: pack.id })).rejects.toThrow(/review in progress/);
+  });
+
+  it("keeps both events when two tabs commit at once", () => {
+    // Two tabs: each holds its own store, seeded the same, and receives the
+    // other's commits, as BroadcastChannel delivers them.
+    const tabA = new MockStore(mockUsers.agent);
+    seed(tabA);
+    const tabB = new MockStore(mockUsers.agent);
+    for (const event of tabA.events) tabB.apply({ kind: "issue", issue: tabA.issues.get(event.issueId)!, event });
+    for (const pack of tabA.packs.values()) tabB.apply({ kind: "pack", pack });
+
+    const fromA: Change[] = [];
+    const fromB: Change[] = [];
+    tabA.onCommit = (ch) => fromA.push(ch);
+    tabB.onCommit = (ch) => fromB.push(ch);
+    const open = [...tabA.issues.values()].filter((i) => i.status === IssueStatus.OPEN);
+    const update = (id: string, version: number, title: string) =>
+      create(UpdateIssueRequestSchema, { id, expectedVersion: version, title });
+    tabA.updateIssue(mockUsers.alice, update(open[0].id, open[0].version, "A's edit"));
+    tabB.updateIssue(mockUsers.bob, update(open[1].id, open[1].version, "B's edit"));
+    for (const ch of fromA) tabB.apply(ch);
+    for (const ch of fromB) tabA.apply(ch);
+
+    for (const tab of [tabA, tabB]) {
+      expect(tab.issues.get(open[0].id)?.title).toBe("A's edit");
+      expect(tab.issues.get(open[1].id)?.title).toBe("B's edit");
+      expect(tab.events.length).toBe(tabA.events.length);
+    }
   });
 });

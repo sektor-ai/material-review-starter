@@ -4,11 +4,13 @@ import {
   AuthService,
   IssueService,
   PackService,
+  ReviewRunStatus,
   ReviewService,
   WatchPackResponseSchema,
   type User,
   type WatchPackResponse,
 } from "@app/api";
+import { isActiveRun } from "../format.ts";
 import { runAgent } from "./agent.ts";
 import { mockUsers, seed } from "./seed.ts";
 import { MockStore } from "./store.ts";
@@ -55,6 +57,35 @@ export function createMockApi(options: MockApiOptions = {}): MockApi {
   const store = new MockStore(mockUsers.agent);
   if (isolated || !loadState(store)) seed(store);
   if (!isolated) attachSync(store);
+
+  // A scripted run is driven by the tab that started it, which holds a Web
+  // Lock for as long as it does. A run whose lock is free has no driver
+  // (its tab was closed or reloaded) and would stay RUNNING forever, so it
+  // is failed instead.
+  //
+  // Known gaps, accepted for a dev-only mock: a tab that loads between
+  // another tab committing a run and taking its lock can fail a live run,
+  // and tabs that were already open don't notice a run abandoned later.
+  const locks = !isolated && typeof navigator !== "undefined" ? navigator.locks : undefined;
+  const runLock = (runId: string) => `mockApi.run.${runId}`;
+
+  function driveRun(runId: string) {
+    const drive = () => runAgent(store, runId, undefined, agentStepMs);
+    if (locks) void locks.request(runLock(runId), drive);
+    else void drive();
+  }
+
+  if (locks) {
+    for (const run of store.runs.values()) {
+      if (!isActiveRun(run.status)) continue;
+      void locks.request(runLock(run.id), { ifAvailable: true }, async (lock) => {
+        if (!lock || !isActiveRun(store.runs.get(run.id)?.status)) return;
+        store.finishRun(run.id, ReviewRunStatus.FAILED, {
+          error: "The browser tab running this mock review was closed before it finished.",
+        });
+      });
+    }
+  }
 
   const humans = [mockUsers.alice, mockUsers.bob];
   if (session.get() === null) session.set("alice@example.com");
@@ -163,7 +194,7 @@ export function createMockApi(options: MockApiOptions = {}): MockApi {
       router.service(ReviewService, {
         startReview: (req) => {
           const run = store.startReview(me(), req.packId);
-          void runAgent(store, run.id, undefined, agentStepMs);
+          driveRun(run.id);
           return { run };
         },
         getReviewRun: (req) => (me(), { run: store.mustRun(req.id) }),

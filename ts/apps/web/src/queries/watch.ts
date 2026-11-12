@@ -3,7 +3,7 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { WatchPackResponse } from "@app/api";
 import { clients } from "../api.ts";
 import { userName } from "../format.ts";
-import { writeIssue, writeIssueEvent, writePack, writeRun } from "./cache.ts";
+import { advanceCursor, writeIssue, writeIssueEvent, writePack, writeRun } from "./cache.ts";
 
 export type WatchStatus = "connecting" | "live" | "reconnecting";
 
@@ -15,13 +15,18 @@ const SILENCE_MS = 45_000;
 const MAX_BACKOFF_MS = 15_000;
 
 // applyWatchUpdate writes one stream message into the query cache and
-// returns the event seq it carried, if any.
+// returns the event seq it carried, if any. Applying an issue event also
+// advances the cached cursor, so a stream opened later (e.g. on returning
+// to the page) starts after it.
 export function applyWatchUpdate(qc: QueryClient, res: WatchPackResponse): bigint | undefined {
   switch (res.update.case) {
     case "issueChanged": {
       const { issue, event } = res.update.value;
       if (issue) writeIssue(qc, issue);
-      if (event) writeIssueEvent(qc, event);
+      if (event) {
+        writeIssueEvent(qc, event);
+        advanceCursor(qc, event.packId, event.seq);
+      }
       return event?.seq;
     }
     case "runUpdated":
@@ -99,8 +104,13 @@ export function usePackWatch(packId: string, cursorSeq: bigint | undefined, meId
             attempt = 0;
             setStatus("live");
             const eventSeq = applyWatchUpdate(qc, res);
-            if (eventSeq !== undefined && eventSeq > seq) seq = eventSeq;
-            markRecent(res);
+            // An event past the stream position is news, even if the issue
+            // already reached the cache another way (a conflict response, a
+            // refetch). Anything at or before it was seen already.
+            if (eventSeq !== undefined && eventSeq > seq) {
+              seq = eventSeq;
+              markRecent(res);
+            }
           }
         } catch {
           // Dropped, timed out, or the server went away: reconnect below.
