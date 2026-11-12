@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/sektor-ai/material-review-starter/go/internal/config"
@@ -22,6 +23,23 @@ func TestNamesFor(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("namesFor = %+v, want %+v", got, want)
+	}
+}
+
+// slugPattern must agree with SLUG_PATTERN in tools/wt/lib/common.sh; tools/wt/test_resolve.sh runs
+// the same cases against the bash side.
+func TestSlugPattern(t *testing.T) {
+	valid := []string{"a", "ab", "a-b", "a--b", "upload-form", "9x", strings.Repeat("a", 39)}
+	invalid := []string{"", "a-", "-a", "A", "foo_bar", "a b", strings.Repeat("a", 40)}
+	for _, s := range valid {
+		if !slugPattern.MatchString(s) {
+			t.Errorf("slug %q rejected, want accepted", s)
+		}
+	}
+	for _, s := range invalid {
+		if slugPattern.MatchString(s) {
+			t.Errorf("slug %q accepted, want rejected", s)
+		}
 	}
 }
 

@@ -80,9 +80,8 @@ die() {
 
 # require_one_env dies when a command that acts on a single environment is handed a second one. `wt
 # rebase` is the only command that batches, and its habitual form names every environment at once; typed
-# with another verb, a parser that keeps the last positional acts on an environment nobody chose. In
-# the project this tool comes from, that is how an unready pull request got merged and its worktree
-# reaped.
+# with another verb, a parser that keeps the last positional acts on an environment nobody chose — and
+# for `merge`, merges a pull request nobody meant to merge.
 #
 # `seen` counts the positionals taken so far rather than testing whether the first one was non-empty, so
 # an empty argument cannot pose as "none yet" and let the second through. It is called as a plain command
@@ -127,16 +126,17 @@ socket_path() { printf '%s/%s\n' "$(state_dir "$1")" "$PC_SOCKET_NAME"; }
 # ── validation ────────────────────────────────────────────────────────────────────────────────────
 
 # A slug becomes a directory name, a git branch component, a Postgres database name component and a
-# bucket name component, so keep it to the intersection of what all of them accept. go/cmd/devenv
-# checks the same pattern. Named because a slug is also *derived* from a branch (slug_from_branch),
+# bucket name component, so keep it to the intersection of what all of them accept — including that a
+# bucket name must end in a letter or digit, so no trailing dash. go/cmd/devenv checks the same
+# pattern. Named because a slug is also *derived* from a branch (slug_from_branch),
 # which needs the same test but a different message.
-readonly SLUG_PATTERN='^[a-z0-9][a-z0-9-]{0,38}$'
+readonly SLUG_PATTERN='^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$'
 
 validate_slug() {
 	local slug=$1
 	[[ -n $slug ]] || die 'slug is required'
 	[[ $slug =~ $SLUG_PATTERN ]] ||
-		die "invalid slug '${slug}': use lowercase letters, digits and dashes (max 39 chars)"
+		die "invalid slug '${slug}': lowercase letters, digits and dashes, starting and ending with a letter or digit (max 39 chars)"
 }
 
 # validate_branch_type keeps the branch prefix to the /mk-pr set, so a typo'd --type is caught rather

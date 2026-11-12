@@ -547,6 +547,45 @@ WT_TEST_GH_JSON='{"state":"MERGED","number":2,"url":"https://example.test/pull/2
 	bash -c 'cd "$1" && "$2" gc >/dev/null 2>&1' -- "$primary" "$WT" || bad 'gc unexpectedly failed'
 [[ -f "$MR_WT_HOME/tidy/env.json" ]] && bad 'gc reaps a clean merged environment' || ok 'gc reaps a clean merged environment'
 
+# ── hooks go where git runs them from ─────────────────────────────────────────────────────────────
+echo
+echo 'wt install-hooks'
+
+primary=$(make_primary hooksdefault)
+(cd "$primary" && "$WT" install-hooks >/dev/null 2>&1) || bad 'install-hooks unexpectedly failed'
+[[ -L "$primary/.git/hooks/post-commit" && -L "$primary/.git/hooks/post-merge" ]] &&
+	ok 'installs into .git/hooks by default' || bad 'installs into .git/hooks by default'
+(cd "$primary" && "$WT" uninstall-hooks >/dev/null 2>&1) || bad 'uninstall-hooks unexpectedly failed'
+[[ -e "$primary/.git/hooks/post-commit" ]] && bad '  ...and uninstall removes them' || ok '  ...and uninstall removes them'
+
+# A repo-local core.hooksPath is where git runs hooks from, so that is where they must go — installing
+# into .git/hooks would leave them silently never running.
+primary=$(make_primary hookspath)
+git -C "$primary" config core.hooksPath .githooks
+mkdir -p "$primary/.githooks"
+printf '#!/bin/sh\nexit 0\n' >"$primary/.githooks/post-commit"
+chmod +x "$primary/.githooks/post-commit"
+(cd "$primary" && "$WT" install-hooks >/dev/null 2>&1) || bad 'install-hooks with core.hooksPath unexpectedly failed'
+[[ -L "$primary/.githooks/post-commit" ]] && ok 'honours a repo-local core.hooksPath' || bad 'honours a repo-local core.hooksPath'
+[[ -f "$primary/.githooks/post-commit.pre-wt" ]] && ok '  ...preserving the hook already there' ||
+	bad '  ...preserving the hook already there'
+[[ -e "$primary/.git/hooks/post-commit" ]] && bad '  ...and writes nothing to .git/hooks' || ok '  ...and writes nothing to .git/hooks'
+(cd "$primary" && "$WT" uninstall-hooks >/dev/null 2>&1) || bad 'uninstall-hooks unexpectedly failed'
+[[ -f "$primary/.githooks/post-commit" && ! -L "$primary/.githooks/post-commit" ]] &&
+	ok '  ...and uninstall puts the original back' || bad '  ...and uninstall puts the original back'
+
+# A core.hooksPath outside the repository serves every repo on the machine; wt must not write there.
+primary=$(make_primary hooksglobal)
+outside="$TMP_ROOT/shared-hooks"
+mkdir -p "$outside"
+git -C "$primary" config core.hooksPath "$outside"
+if (cd "$primary" && "$WT" install-hooks >/dev/null 2>&1); then
+	bad 'refuses a core.hooksPath outside the repository'
+else
+	ok 'refuses a core.hooksPath outside the repository'
+fi
+[[ -z $(ls -A "$outside") ]] && ok '  ...writing nothing there' || bad '  ...writing nothing there'
+
 echo
 if ((failures > 0)); then
 	printf '%d failure(s)\n' "$failures"

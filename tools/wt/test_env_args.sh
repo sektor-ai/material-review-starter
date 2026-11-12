@@ -3,13 +3,9 @@
 # Tests for `require_one_env` — the rule that every command except `rebase` acts on exactly one
 # environment, and that a list is an error rather than a batch.
 #
-# This is a regression test for a merged-too-early incident: the habitual line after something lands is
-# `wt rebase a b c d e f`, and typing `merge` in place of `rebase` used to be accepted, with the parser
-# silently keeping the *last* slug and merging that environment's pull request. One wrong verb squash-
-# merged an unready branch and reaped its worktree (in the project this tool comes from). The same
-# last-wins parser sat in `rm` (deletes a worktree and its database) and `reset-db` (discards an
-# environment's data), so the guard covers every single-environment command, not only the one that got
-# burned.
+# The habitual line after something lands is `wt rebase a b c d e f`. Typed with another verb, a parser
+# that kept the last positional would act on an environment nobody chose — for `merge`, merging a pull
+# request; for `rm` or `reset-db`, destroying a worktree or its data. So every command refuses a list.
 #
 # The cases run the real `wt.sh` against a throwaway MR_WT_HOME, which holds no environments — so a
 # name that gets past the guard dies on a missing prerequisite or an unresolvable name instead, and
@@ -32,8 +28,12 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly SCRIPT_DIR
 
 # Every command whose positional names an existing environment. `rebase` is absent on purpose: batching
-# is its job. `create` is absent for the reason in the header.
-readonly SINGLE_ENV_COMMANDS=(merge rm reset-db promote demote resume)
+# is its job. `create` is absent for the reason in the header. restart, logs and url take a second
+# argument (a process or service), so they are covered separately below.
+readonly SINGLE_ENV_COMMANDS=(merge rm reset-db promote demote resume up down recreate-config path)
+readonly ENV_AND_NAME_COMMANDS=(restart logs url)
+# Commands that need an environment, and must say so with a usage line rather than a bash error.
+readonly NEEDS_ENV_COMMANDS=(up down recreate-config restart logs url)
 
 MR_WT_HOME=$(mktemp -d)
 export MR_WT_HOME
@@ -119,6 +119,38 @@ for cmd in "${SINGLE_ENV_COMMANDS[@]}"; do
 	*) ok "wt ${cmd} accepts a single environment" ;;
 	esac
 done
+
+# restart, logs and url take an environment plus a name; a third argument is refused, not ignored.
+for cmd in "${ENV_AND_NAME_COMMANDS[@]}"; do
+	result=$(wt_stderr "$cmd" glazing api ktx2-textures)
+	case ${result#*|} in
+	*'takes at most 2 arguments'*) ok "wt ${cmd} refuses a third argument" ;;
+	*) bad "wt ${cmd} should refuse a third argument, got: '${result#*|}'" ;;
+	esac
+	result=$(wt_stderr "$cmd" glazing api)
+	case ${result#*|} in
+	*'takes at most'* | *'takes one environment'*) bad "wt ${cmd} refused an environment and a name: '${result#*|}'" ;;
+	*) ok "wt ${cmd} accepts an environment and a name" ;;
+	esac
+done
+
+# A missing environment is a usage error, never bash's `unbound variable`.
+for cmd in "${NEEDS_ENV_COMMANDS[@]}"; do
+	result=$(wt_stderr "$cmd")
+	case ${result#*|} in
+	'0|'*) bad "wt ${cmd} with no environment exited 0" ;;
+	*'unbound variable'*) bad "wt ${cmd} with no environment died with a shell error: '${result#*|}'" ;;
+	*"usage: wt ${cmd}"*) ok "wt ${cmd} with no environment prints usage" ;;
+	*) bad "wt ${cmd} with no environment should print usage, got: '${result#*|}'" ;;
+	esac
+done
+
+# A flag these commands do not take is refused rather than read as an environment name.
+result=$(wt_stderr up --force glazing)
+case ${result#*|} in
+*'unknown flag for up'*) ok 'an unknown flag is refused, not taken as a name' ;;
+*) bad "an unknown flag should be refused, got: '${result#*|}'" ;;
+esac
 
 # No environment at all is still the usage error it always was, not the list error.
 none=$(wt_stderr merge --no-advance)

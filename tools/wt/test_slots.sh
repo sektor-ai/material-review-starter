@@ -9,8 +9,7 @@
 #
 #   tools/wt/test_slots.sh
 #
-# The concurrency case is the regression test for the race that put two environments on one slot
-# (seen in the project this tool comes from):
+# The concurrency case is the regression test for the race that would put two environments on one slot:
 # without the slot lock and reservations, parallel creates all scan the same unwritten state and pick
 # the same lowest free slot.
 

@@ -87,6 +87,17 @@ case $miss_stderr in
 *) bad "resolve_env's message is unhelpful: '${miss_stderr}'" ;;
 esac
 
+printf 'validate_slug\n'
+# Every slug becomes a bucket name component, and a bucket name may not end in a dash: a slug like `foo-`
+# used to pass validation and then fail seeding, after the worktree and database already existed.
+slug_ok() { (validate_slug "$1") >/dev/null 2>&1 && echo valid || echo invalid; }
+for good in a ab a-b a--b upload-form 9x "$(printf 'a%.0s' $(seq 1 39))"; do
+	check_eq valid "$(slug_ok "$good")" "accepts '${good}'"
+done
+for badslug in '' a- -a A Ab foo_bar 'a b' "$(printf 'a%.0s' $(seq 1 40))"; do
+	check_eq invalid "$(slug_ok "$badslug")" "rejects '${badslug}'"
+done
+
 printf '\n'
 ((failures == 0)) || {
 	printf '%s test(s) failed\n' "$failures" >&2
